@@ -239,6 +239,23 @@ Client                              Server
 
 ## 开发指南 · Development
 
+## 服务器一键部署（git clone 后直接执行）
+
+在 Ubuntu 服务器上：
+
+```bash
+git clone <你的仓库地址>
+cd Project
+chmod +x deploy-server.sh
+./deploy-server.sh
+```
+
+说明：
+- 首次执行会自动安装 Docker（如果未安装）
+- 若缺少 `openclaw-travel-backend/.env`，脚本会自动创建并提示你先填入真实 API Key
+- 填好后再次执行 `./deploy-server.sh` 即可完成构建和启动
+- 默认会启动 `docker-compose.yml` 中的前后端服务，前端映射到 `80` 端口
+
 ### 运行测试
 
 ```bash
