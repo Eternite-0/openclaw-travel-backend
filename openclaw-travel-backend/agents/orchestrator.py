@@ -55,6 +55,7 @@ async def run_travel_pipeline(
     status_store: StatusStore,
     llm_config: dict,
     db_session: Session,
+    original_task_id: Optional[str] = None,
 ) -> FinalItinerary:
     """
     Chief Orchestrator — smart follow-up aware execution plan.
@@ -73,7 +74,16 @@ async def run_travel_pipeline(
     previous_summary = ""
     previous_itinerary_json = ""
 
-    prev_record = get_session_last_result(session_id)
+    prev_record = None
+    if original_task_id:
+        from sqlmodel import select as _sel
+        prev_record = db_session.exec(
+            _sel(ItineraryRecord).where(ItineraryRecord.task_id == original_task_id)
+        ).first()
+        if prev_record:
+            logger.info("[task:%s] Found previous itinerary via original_task_id=%s", task_id, original_task_id)
+    if not prev_record:
+        prev_record = get_session_last_result(session_id)
     if prev_record:
         try:
             prev_itinerary = FinalItinerary.model_validate_json(prev_record.itinerary_json)
@@ -142,6 +152,17 @@ async def run_travel_pipeline(
     need_weather = "weather_agent"  not in skip_set
     need_currency = "currency_agent" not in skip_set
 
+    # Surface parallel scheduling intent to UI early, so frontend can show
+    # multiple agents as running during pre-fetch and avoid "sudden done only".
+    for agent_name in ("currency_agent", "budget_agent", "flight_agent", "hotel_agent", "attraction_agent", "weather_agent"):
+        if agent_name not in skip_set:
+            await status_store.update_agent(
+                task_id,
+                agent_name,
+                "running",
+                message="等待外部数据与任务调度...",
+            )
+
     async def _noop_dict():  return {}
     async def _noop_str():   return ""
     async def _noop_float(): return 1.0
@@ -205,45 +226,51 @@ async def run_travel_pipeline(
     attraction_agent = AttractionAgent(task_id, intent, status_store, llm_config)
     weather_agent   = WeatherAgent(task_id, intent, status_store, llm_config)
 
-    (
-        currency,
-        budget,
-        flights,
-        hotels,
-        attractions,
-        weather,
-    ) = await asyncio.gather(
-        _run_or_cache("currency_agent",
-            currency_agent.run(extra_context={
-                "to_currency": to_currency, "rate": rate, "budget_in_dest": budget_in_dest,
-            }),
-            cached.get("currency")),
-        _run_or_cache("budget_agent",
-            budget_agent.run(),
-            cached.get("budget")),
-        _run_or_cache("flight_agent",
-            flight_agent.run(extra_context={
-                "flight_budget_cny": flight_budget,
-                "serpapi_data": serpapi_flight_summary,
-                "tavily_data": tavily_flights_str,
-                "crawleo_data": crawleo_flights_str,
-            }),
-            cached.get("flights")),
-        _run_or_cache("hotel_agent",
-            hotel_agent.run(extra_context={
-                "hotel_budget_cny": hotel_budget,
-                "serpapi_data": serpapi_hotel_summary,
-                "tavily_data": tavily_hotels_str,
-                "crawleo_data": crawleo_hotels_str,
-            }),
-            cached.get("hotels")),
-        _run_or_cache("attraction_agent",
-            attraction_agent.run(),
-            cached.get("attractions")),
-        _run_or_cache("weather_agent",
-            weather_agent.run(extra_context={"weather_data": forecast_raw}),
-            cached.get("weather")),
-        return_exceptions=False,
+    # Run LLM-heavy specialists in low-concurrency mode to avoid provider
+    # concurrency-limit 429 errors. Currency is prioritized first.
+    currency = await _run_or_cache(
+        "currency_agent",
+        currency_agent.run(extra_context={
+            "to_currency": to_currency,
+            "rate": rate,
+            "budget_in_dest": budget_in_dest,
+        }),
+        cached.get("currency"),
+    )
+    budget = await _run_or_cache(
+        "budget_agent",
+        budget_agent.run(),
+        cached.get("budget"),
+    )
+    flights = await _run_or_cache(
+        "flight_agent",
+        flight_agent.run(extra_context={
+            "flight_budget_cny": flight_budget,
+            "serpapi_data": serpapi_flight_summary,
+            "tavily_data": tavily_flights_str,
+            "crawleo_data": crawleo_flights_str,
+        }),
+        cached.get("flights"),
+    )
+    hotels = await _run_or_cache(
+        "hotel_agent",
+        hotel_agent.run(extra_context={
+            "hotel_budget_cny": hotel_budget,
+            "serpapi_data": serpapi_hotel_summary,
+            "tavily_data": tavily_hotels_str,
+            "crawleo_data": crawleo_hotels_str,
+        }),
+        cached.get("hotels"),
+    )
+    attractions = await _run_or_cache(
+        "attraction_agent",
+        attraction_agent.run(),
+        cached.get("attractions"),
+    )
+    weather = await _run_or_cache(
+        "weather_agent",
+        weather_agent.run(extra_context={"weather_data": forecast_raw}),
+        cached.get("weather"),
     )
 
     currency:   CurrencyInfo    # type: ignore[assignment]

@@ -167,6 +167,8 @@ class TaskStatus(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     session_id: str
+    task_id: Optional[str] = None
+    itinerary_context: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

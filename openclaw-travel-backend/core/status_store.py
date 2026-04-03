@@ -50,6 +50,9 @@ class StatusStore:
     async def _save(self, task_id: str, data: dict) -> None:
         key = self._task_key(task_id)
         payload = json.dumps(data, ensure_ascii=False, default=str)
+        # Keep a local shadow copy even when Redis is healthy, so transient
+        # Redis read failures do not make us lose in-flight status updates.
+        _FALLBACK_STORE[key] = data
         if self._redis is not None:
             try:
                 await self._redis.set(key, payload, ex=self._ttl)
@@ -80,7 +83,9 @@ class StatusStore:
         data = {
             "task_id": task_id,
             "session_id": session_id,
-            "overall_status": "pending",
+            # Mark as running immediately so frontend can render active state
+            # before the first specialist agent heartbeat arrives.
+            "overall_status": "running",
             "progress_pct": 0,
             "agents": agents,
             "created_at": now,

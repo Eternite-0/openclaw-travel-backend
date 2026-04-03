@@ -1,11 +1,13 @@
-import { useState, useEffect, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
+import avatarImg from '../images/avatar.jpg';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Bell, Settings, Map as MapIcon, History, PlusCircle, UserCog,
   Share, MapPin, Sun, ThumbsUp, Train, Hotel, Clock, Wallet,
   Mountain, Network, Plus, Send, User, Bot, Umbrella, Users, ArrowUp,
   Loader2, CheckCircle2, CircleDashed, XCircle, CalendarDays, Plane, ChevronRight,
-  Sparkles, Banknote, Calculator, Compass, CloudSun, Route, type LucideIcon,
+  Sparkles, Banknote, Calculator, Compass, CloudSun, Route, X, MessageSquare,
+  Mic, SlidersHorizontal, Search, FileText, type LucideIcon,
 } from 'lucide-react';
 
 // ── API Types ──────────────────────────────────────────────────────────────
@@ -140,6 +142,12 @@ const AGENT_PLACEHOLDERS: AgentStatus[] = [
   { agent_name: 'itinerary_agent', display_name: '行程生成', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
 ];
 
+function normalizeAgents(incoming: AgentStatus[] | undefined, fallback: AgentStatus[]): AgentStatus[] {
+  const source = incoming && incoming.length > 0 ? incoming : fallback;
+  const byName = new Map(source.map(a => [a.agent_name, a]));
+  return AGENT_PLACEHOLDERS.map((placeholder) => byName.get(placeholder.agent_name) ?? placeholder);
+}
+
 const AGENT_STYLE: Record<string, { icon: LucideIcon; color: string; bg: string; activeBg: string }> = {
   intent_parser:    { icon: Sparkles,   color: 'text-indigo-500', bg: 'bg-indigo-50',  activeBg: 'bg-indigo-100' },
   currency_agent:   { icon: Banknote,   color: 'text-amber-500',  bg: 'bg-amber-50',   activeBg: 'bg-amber-100' },
@@ -155,17 +163,40 @@ const AGENT_STYLE: Record<string, { icon: LucideIcon; color: string; bg: string;
 
 const API_BASE = '/api';
 
-async function postChat(message: string, sessionId: string): Promise<ChatResponse> {
+async function postChat(message: string, sessionId: string, taskId?: string, itineraryContext?: string): Promise<ChatResponse> {
   const res = await fetch(`${API_BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({
+      message,
+      session_id: sessionId,
+      ...(taskId && { task_id: taskId }),
+      ...(itineraryContext && { itinerary_context: itineraryContext }),
+    }),
   });
   if (!res.ok) {
     const txt = await res.text().catch(() => res.statusText);
     throw new Error(`请求失败 (${res.status}): ${txt}`);
   }
   return res.json();
+}
+
+function buildItineraryContext(it: FinalItinerary): string {
+  const lines: string[] = [
+    `目的地: ${it.intent.dest_city}(${it.intent.dest_country})`,
+    `出发地: ${it.intent.origin_city}`,
+    `日期: ${it.intent.departure_date} ~ ${it.intent.return_date}，共${it.intent.duration_days}天`,
+    `预算: ¥${it.intent.budget_cny}`,
+    `航班: ${it.recommended_flight?.airline || ''} ${it.recommended_flight?.flight_number || ''}, ¥${it.recommended_flight?.price_cny || '?'}`,
+    `酒店: ${it.recommended_hotel?.name || ''}, ¥${it.recommended_hotel?.price_per_night_cny || '?'}/晚`,
+  ];
+  if (it.weather?.overall_summary) lines.push(`天气: ${it.weather.overall_summary}`);
+  for (const day of it.days) {
+    const acts = day.activities.map(a => a.activity).slice(0, 5).join(', ');
+    lines.push(`第${day.day_number}天 [${day.theme}]: ${acts}`);
+  }
+  if (it.highlights?.length) lines.push(`亮点: ${it.highlights.slice(0, 5).join('、')}`);
+  return lines.join('\n');
 }
 
 async function pollStatus(taskId: string): Promise<TaskStatus> {
@@ -383,6 +414,16 @@ export default function App() {
     setCurrentView('processing');
   }, []);
 
+  const handleCancelTask = useCallback(() => {
+    setTaskId(null);
+    setRunningTask(null);
+    setCurrentView('home');
+  }, []);
+
+  const handleUpdateItinerary = useCallback((updated: FinalItinerary) => {
+    setItinerary(updated);
+  }, []);
+
   return (
     <div className="min-h-screen bg-surface text-on-surface font-sans selection:bg-primary-container selection:text-on-primary-container">
       {/* Header */}
@@ -403,7 +444,7 @@ export default function App() {
             <Settings className="w-5 h-5 cursor-pointer hover:text-on-surface transition-colors" />
           </div>
           <div className="h-8 w-8 rounded-full bg-surface-container-highest flex items-center justify-center overflow-hidden">
-            <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuACslEmFEkkDsecolZboQtiihZzOYS-gyN9vjz8lgvu6hf4-AjhIy2VFMgxni3rdHq5tvLGuXW3dRPrfC3QuZzEYmylY4SaTVBitUSF29KO-STYVP8ZP8ggXkQ2Pp6aj8tV-dkmGQFNea-apQwAHE0pDVrILZ8CrN518uJcLrqGDHDvh5sxy__dhiXLfw_3oIo54BgsQwZ_O3lK5P4f5QCL_FC65v08Z5cI3aAq2JO-mSSeCU17pxGw3lP_j9Ghad8R3rN3bUYHTGsI" alt="User" className="h-full w-full object-cover" />
+            <img src={avatarImg} alt="User" className="h-full w-full object-cover" />
           </div>
         </div>
       </header>
@@ -442,13 +483,6 @@ export default function App() {
             <UserCog className="w-4 h-4" />
             <span>个人设置</span>
           </button>
-          <div className="flex items-center gap-3 px-3 py-3 mt-2">
-            <div className="w-8 h-8 rounded bg-primary-container flex items-center justify-center text-primary font-bold text-xs">TP</div>
-            <div className="flex flex-col text-left">
-              <span className="text-xs font-semibold text-on-surface">Travel Planner</span>
-              <span className="text-[10px] text-outline">Premium User</span>
-            </div>
-          </div>
         </div>
       </aside>
 
@@ -457,10 +491,10 @@ export default function App() {
           <HomeView key="home" sessionId={sessionId} onNavigate={handleNavigateToProcessing} />
         )}
         {currentView === 'processing' && taskId && (
-          <ProcessingView key="processing" taskId={taskId} onComplete={handleProcessingComplete} />
+          <ProcessingView key="processing" taskId={taskId} onComplete={handleProcessingComplete} onCancel={handleCancelTask} />
         )}
         {currentView === 'itinerary' && (
-          <ItineraryView key="itinerary" itinerary={itinerary} sessionId={sessionId} onRefine={handleNavigateToProcessing} />
+          <ItineraryView key="itinerary" itinerary={itinerary} sessionId={sessionId} onUpdateItinerary={handleUpdateItinerary} />
         )}
         {currentView === 'history' && (
           <HistoryView key="history" onViewItem={handleViewHistoryItem} runningTask={runningTask} onResumeTask={handleResumeTask} />
@@ -470,7 +504,7 @@ export default function App() {
   );
 }
 
-function ProcessingView({ taskId, onComplete }: { taskId: string; onComplete: (r: FinalItinerary) => void }) {
+function ProcessingView({ taskId, onComplete, onCancel }: { taskId: string; onComplete: (r: FinalItinerary) => void; onCancel: () => void }) {
   const [agents, setAgents] = useState<AgentStatus[]>(AGENT_PLACEHOLDERS);
   const [overallStatus, setOverallStatus] = useState<string>('pending');
   const [progressPct, setProgressPct] = useState(0);
@@ -492,7 +526,7 @@ function ProcessingView({ taskId, onComplete }: { taskId: string; onComplete: (r
         const status = await pollStatus(taskId);
         if (cancelled) return;
 
-        setAgents(status.agents);
+        setAgents(prev => normalizeAgents(status.agents, prev));
         setOverallStatus(status.overall_status);
         setProgressPct(status.progress_pct);
 
@@ -508,7 +542,7 @@ function ProcessingView({ taskId, onComplete }: { taskId: string; onComplete: (r
           return;
         }
 
-        timerId = setTimeout(poll, 2000);
+        timerId = setTimeout(poll, 1000);
       } catch (err: unknown) {
         if (!cancelled) setErrorMsg(`网络错误：${err instanceof Error ? err.message : String(err)}`);
       }
@@ -651,6 +685,31 @@ function ProcessingView({ taskId, onComplete }: { taskId: string; onComplete: (r
           })}
         </div>
 
+        {/* Cancel / terminate button */}
+        {!errorMsg && overallStatus !== 'done' && (
+          <div className="mt-5 flex justify-center">
+            <button
+              onClick={onCancel}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium text-on-surface-variant border border-outline-variant/40 hover:bg-surface-container-high hover:text-red-500 hover:border-red-300 transition-all duration-200"
+            >
+              <X className="w-3.5 h-3.5" />
+              终止任务
+            </button>
+          </div>
+        )}
+
+        {errorMsg && (
+          <div className="mt-5 flex justify-center">
+            <button
+              onClick={onCancel}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium text-on-surface-variant border border-outline-variant/40 hover:bg-surface-container-high transition-all duration-200"
+            >
+              <X className="w-3.5 h-3.5" />
+              返回首页
+            </button>
+          </div>
+        )}
+
         {/* Progress footer */}
         {!errorMsg && (
           <div className="mt-6 space-y-2.5">
@@ -685,14 +744,55 @@ function HomeView({ sessionId, onNavigate }: { sessionId: string; onNavigate: (t
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [detectedCity, setDetectedCity] = useState<string | null>(null);
+  const [locationStatus, setLocationStatus] = useState<'idle' | 'detecting' | 'detected' | 'denied'>('idle');
+
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    setLocationStatus('detecting');
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`,
+            { headers: { 'Accept-Language': 'zh-CN,zh;q=0.9' } },
+          );
+          const data = await res.json();
+          const city =
+            data.address?.city ||
+            data.address?.town ||
+            data.address?.county ||
+            data.address?.state_district ||
+            data.address?.state;
+          if (city) {
+            setDetectedCity(city);
+            setLocationStatus('detected');
+          } else {
+            setLocationStatus('denied');
+          }
+        } catch {
+          setLocationStatus('denied');
+        }
+      },
+      () => setLocationStatus('denied'),
+      { timeout: 8000 },
+    );
+  }, []);
+
+  const _buildMessage = (text: string): string => {
+    if (!detectedCity) return text;
+    if (/从|出发地|出发城市|我在|我住|我现在/.test(text)) return text;
+    return `${text}（我当前位于${detectedCity}，请以此作为出发地）`;
+  };
 
   const handleAction = async (preset?: string) => {
     const text = preset ?? inputValue.trim();
     if (!text || loading) return;
     setLoading(true);
     setErrorMsg(null);
+    const finalText = _buildMessage(text);
     try {
-      const res = await postChat(text, sessionId);
+      const res = await postChat(finalText, sessionId);
       if (res.task_id) {
         onNavigate(res.task_id, text);
       } else {
@@ -721,7 +821,7 @@ function HomeView({ sessionId, onNavigate }: { sessionId: string; onNavigate: (t
           <div className="flex items-center justify-center gap-4 mb-1">
             <Sun className="w-10 h-10 text-orange-400 opacity-80 fill-orange-400" />
             <h2 className="text-5xl font-serif text-slate-800 tracking-tight leading-tight italic">
-              Good Afternoon, User Name
+              Good Afternoon, Tracy
             </h2>
           </div>
           <p className="text-slate-400 font-sans text-xl font-light tracking-wide">
@@ -774,6 +874,28 @@ function HomeView({ sessionId, onNavigate }: { sessionId: string; onNavigate: (t
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowUp className="w-5 h-5" />}
             </button>
           </div>
+        </div>
+
+        {/* Location pill */}
+        <div className="flex justify-center">
+          {locationStatus === 'detecting' && (
+            <span className="flex items-center gap-1.5 text-[11px] text-on-surface-variant/60 px-3 py-1 rounded-full bg-surface-container-low border border-outline-variant/20">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              正在获取出发地...
+            </span>
+          )}
+          {locationStatus === 'detected' && detectedCity && (
+            <span className="flex items-center gap-1.5 text-[11px] text-primary/80 px-3 py-1 rounded-full bg-primary/8 border border-primary/20">
+              <MapPin className="w-3 h-3" />
+              出发地已定位：{detectedCity}
+            </span>
+          )}
+          {locationStatus === 'denied' && (
+            <span className="flex items-center gap-1.5 text-[11px] text-on-surface-variant/50 px-3 py-1 rounded-full bg-surface-container-low border border-outline-variant/20">
+              <MapPin className="w-3 h-3" />
+              未获取到位置，请在消息中说明出发城市
+            </span>
+          )}
         </div>
       </div>
     </motion.main>
@@ -966,21 +1088,39 @@ function HistoryView({ onViewItem, runningTask, onResumeTask }: { onViewItem: (r
   );
 }
 
+interface ChatMsg {
+  role: 'user' | 'assistant';
+  text: string;
+  type?: 'replanning' | 'confirm';
+  pendingResult?: FinalItinerary;
+  confirmed?: 'accepted' | 'dismissed';
+}
+
 function ItineraryView({
-  itinerary, sessionId, onRefine,
+  itinerary, sessionId, onUpdateItinerary,
 }: {
   itinerary: FinalItinerary | null;
   sessionId: string;
-  onRefine: (taskId: string, query?: string) => void;
+  onUpdateItinerary: (updated: FinalItinerary) => void;
 }) {
   const [activeDay, setActiveDay] = useState(1);
   const [paymentState, setPaymentState] = useState<'idle' | 'processing' | 'success'>('idle');
   const [inputValue, setInputValue] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
-  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
+  const [chatHistory, setChatHistory] = useState<ChatMsg[]>([]);
+  const [replanTaskId, setReplanTaskId] = useState<string | null>(null);
+  const [scheduleKey, setScheduleKey] = useState(0);
+  const [chatOpen, setChatOpen] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { setActiveDay(1); }, [itinerary]);
+
+  useEffect(() => {
+    if (chatEndRef.current && chatHistory.length > 0) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatHistory]);
 
   useEffect(() => {
     if (!itinerary) return;
@@ -1000,12 +1140,14 @@ function ItineraryView({
     setChatHistory(h => [...h, { role: 'user', text }]);
     setInputValue('');
     try {
-      const res = await postChat(text, sessionId);
+      const ctx = itinerary ? buildItineraryContext(itinerary) : undefined;
+      const res = await postChat(text, sessionId, itinerary?.task_id, ctx);
       if (res.response_type === 'quick' && res.quick_reply) {
         setChatHistory(h => [...h, { role: 'assistant', text: res.quick_reply! }]);
         setChatLoading(false);
       } else if (res.task_id) {
-        onRefine(res.task_id, text);
+        setChatHistory(h => [...h, { role: 'assistant', text: '正在为您重新规划方案，请稍候...', type: 'replanning' }]);
+        setReplanTaskId(res.task_id);
       } else {
         setChatLoading(false);
       }
@@ -1015,6 +1157,56 @@ function ItineraryView({
       setChatLoading(false);
     }
   };
+
+  // Inline polling for replan task
+  useEffect(() => {
+    if (!replanTaskId) return;
+    let cancelled = false;
+    const poll = async () => {
+      while (!cancelled) {
+        await new Promise(r => setTimeout(r, 2000));
+        if (cancelled) break;
+        try {
+          const status = await pollStatus(replanTaskId);
+          if (status.overall_status === 'done') {
+            const result = await fetchResult(replanTaskId);
+            setChatHistory(h => h.map(m =>
+              m.type === 'replanning'
+                ? { role: 'assistant' as const, text: '已为您优化了行程方案，是否更新？', type: 'confirm' as const, pendingResult: result }
+                : m
+            ));
+            setReplanTaskId(null);
+            setChatLoading(false);
+            break;
+          }
+          if (status.overall_status === 'error') {
+            setChatHistory(h => h.filter(m => m.type !== 'replanning'));
+            setChatError('规划失败，请重试');
+            setReplanTaskId(null);
+            setChatLoading(false);
+            break;
+          }
+        } catch {
+          // continue polling on transient errors
+        }
+      }
+    };
+    poll();
+    return () => { cancelled = true; };
+  }, [replanTaskId]);
+
+  const handleConfirmReplan = useCallback((msgIndex: number, action: 'accepted' | 'dismissed') => {
+    setChatHistory(h => h.map((m, i) =>
+      i === msgIndex ? { ...m, confirmed: action, text: action === 'accepted' ? '已更新行程方案 ✓' : '已忽略本次优化建议' } : m
+    ));
+    if (action === 'accepted') {
+      const msg = chatHistory[msgIndex];
+      if (msg?.pendingResult) {
+        onUpdateItinerary(msg.pendingResult);
+        setScheduleKey(k => k + 1);
+      }
+    }
+  }, [chatHistory, onUpdateItinerary]);
 
   const totalDays = itinerary?.days.length ?? 5;
   const destCity = itinerary?.intent.dest_city ?? '大理';
@@ -1029,6 +1221,18 @@ function ItineraryView({
   const handlePayment = () => {
     setPaymentState('processing');
     setTimeout(() => setPaymentState('success'), 1500);
+  };
+
+  const handleNewChat = async () => {
+    try {
+      await fetch(`${API_BASE}/sessions/${sessionId}/clear`, { method: 'POST' });
+    } catch {
+      // best-effort; clear frontend regardless
+    }
+    setChatHistory([]);
+    setInputValue('');
+    setChatError(null);
+    setReplanTaskId(null);
   };
 
   return (
@@ -1146,7 +1350,13 @@ function ItineraryView({
 
         <div className="grid grid-cols-12 gap-6">
           {/* Schedule Card */}
-          <section className="col-span-8 bg-surface-container-lowest rounded-xl p-6 shadow-[0_8px_32px_rgba(87,94,112,0.04)] ring-1 ring-outline-variant/10">
+          <motion.section
+            key={scheduleKey}
+            initial={{ opacity: 0.6, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.4, ease: 'easeOut' }}
+            className="col-span-8 bg-surface-container-lowest rounded-xl p-6 shadow-[0_8px_32px_rgba(87,94,112,0.04)] ring-1 ring-outline-variant/10"
+          >
             <div className="flex justify-between items-center mb-8">
               <div>
                 <h3 className="text-xl font-bold text-on-surface">
@@ -1228,7 +1438,7 @@ function ItineraryView({
                 </>
               )}
             </div>
-          </section>
+          </motion.section>
 
           {/* Right Widgets */}
           <div className="col-span-4 space-y-6">
@@ -1368,58 +1578,313 @@ function ItineraryView({
           )}
         </section>
 
-        {/* Floating Chat Panel */}
-        <div className="fixed bottom-6 left-[220px] right-[300px] flex flex-col items-center px-8 z-40 pointer-events-none gap-2">
-          {chatHistory.length > 0 && (
-            <div className="w-full max-w-3xl pointer-events-auto flex flex-col gap-2 mb-1 max-h-64 overflow-y-auto">
-              {chatHistory.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  {msg.role === 'assistant' && (
-                    <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center flex-shrink-0 mr-2 mt-0.5">
-                      <Bot className="w-4 h-4 text-on-primary" />
-                    </div>
-                  )}
-                  <div className={`max-w-[80%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                    msg.role === 'user'
-                      ? 'bg-primary text-on-primary rounded-br-sm'
-                      : 'bg-white/95 border border-outline-variant/20 text-on-surface rounded-bl-sm'
-                  }`}>
-                    {msg.text}
+        {/* Notion AI-style Floating Chat Button + Panel */}
+        <div className="fixed bottom-6 right-[324px] z-40">
+          <AnimatePresence>
+            {chatOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: 16, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 16, scale: 0.95 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="absolute bottom-16 right-0 w-[420px] bg-white/98 backdrop-blur-2xl rounded-2xl border border-outline-variant/15 shadow-[0_12px_48px_rgba(87,94,112,0.18)] overflow-hidden flex flex-col"
+                style={{ maxHeight: 'calc(100vh - 160px)' }}
+              >
+                {/* ── Header ── */}
+                <div className="flex items-center justify-between px-3 py-2 border-b border-outline-variant/10 flex-shrink-0">
+                  {/* Mascot */}
+                  <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center shadow-md shadow-primary/30 flex-shrink-0">
+                    <svg width="20" height="20" viewBox="0 0 32 32" fill="none">
+                      <circle cx="16" cy="16" r="12" fill="white" opacity="0.95"/>
+                      <ellipse cx="12" cy="14.5" rx="1.8" ry="2.2" fill="#334155">
+                        <animate attributeName="ry" values="2.2;0.4;2.2" dur="3s" repeatCount="indefinite" begin="0.8s"/>
+                      </ellipse>
+                      <ellipse cx="20" cy="14.5" rx="1.8" ry="2.2" fill="#334155">
+                        <animate attributeName="ry" values="2.2;0.4;2.2" dur="3s" repeatCount="indefinite" begin="0.8s"/>
+                      </ellipse>
+                      <path d="M11.5 19.5 Q16 23 20.5 19.5" stroke="#334155" strokeWidth="1.6" strokeLinecap="round" fill="none"/>
+                      <g transform="translate(24, 5)">
+                        <path d="M0 -3 L0.8 -0.8 L3 0 L0.8 0.8 L0 3 L-0.8 0.8 L-3 0 L-0.8 -0.8 Z" fill="white" opacity="0.9">
+                          <animate attributeName="opacity" values="0.9;0.3;0.9" dur="1.5s" repeatCount="indefinite"/>
+                          <animateTransform attributeName="transform" type="rotate" values="0;180;360" dur="4s" repeatCount="indefinite"/>
+                        </path>
+                      </g>
+                    </svg>
                   </div>
-                  {msg.role === 'user' && (
-                    <div className="w-7 h-7 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0 ml-2 mt-0.5 overflow-hidden">
-                      <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuACslEmFEkkDsecolZboQtiihZzOYS-gyN9vjz8lgvu6hf4-AjhIy2VFMgxni3rdHq5tvLGuXW3dRPrfC3QuZzEYmylY4SaTVBitUSF29KO-STYVP8ZP8ggXkQ2Pp6aj8tV-dkmGQFNea-apQwAHE0pDVrILZ8CrN518uJcLrqGDHDvh5sxy__dhiXLfw_3oIo54BgsQwZ_O3lK5P4f5QCL_FC65v08Z5cI3aAq2JO-mSSeCU17pxGw3lP_j9Ghad8R3rN3bUYHTGsI" alt="User" className="h-full w-full object-cover" />
+                  {/* Action buttons */}
+                  <div className="flex items-center gap-0.5">
+                    {/* Share / Upload */}
+                    <button className="w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant/40 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>
+                      </svg>
+                    </button>
+                    {/* Edit / Compose — Start new chat */}
+                    <button
+                      onClick={handleNewChat}
+                      title="Start new chat"
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant/40 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors"
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                      </svg>
+                    </button>
+                    {/* Window / Layout */}
+                    <button className="w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant/40 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>
+                      </svg>
+                    </button>
+                    {/* More (...) */}
+                    <button className="w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant/40 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                        <circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/>
+                      </svg>
+                    </button>
+                    {/* Minimize / Close */}
+                    <button
+                      onClick={() => setChatOpen(false)}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant/40 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors"
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                {/* ── Messages ── */}
+                <div className="flex-1 overflow-y-auto p-5 space-y-4 min-h-[240px] max-h-[480px]">
+                  {chatHistory.length === 0 && (
+                    <div className="flex flex-col">
+                      <motion.p
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.35, delay: 0.1 }}
+                        className="text-[14px] text-on-surface leading-relaxed"
+                      >
+                        你好！我是 OpenClaw AI。你想让我帮你做什么？
+                      </motion.p>
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.35, delay: 0.2 }}
+                        className="mt-3 text-[13px] text-on-surface-variant leading-relaxed"
+                      >
+                        <p>你可以直接告诉我，比如：</p>
+                        <ul className="mt-2 space-y-1.5 list-disc list-inside">
+                          {(['查询行程中的任何细节', '修改某一天的行程安排', '总结或对比行程方案', '优化预算与交通规划'] as string[]).map(t => (
+                            <li key={t}>
+                              <button onClick={() => setInputValue(t)} className="hover:text-on-surface transition-colors text-left">{t}</button>
+                            </li>
+                          ))}
+                        </ul>
+                      </motion.div>
                     </div>
                   )}
+                  <AnimatePresence initial={false}>
+                    {chatHistory.map((msg, i) => (
+                      <motion.div
+                        key={i}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.25 }}
+                        className={msg.role === 'user' ? 'flex justify-end' : ''}
+                      >
+                        {msg.role === 'user' ? (
+                          <div className="inline-block px-4 py-2 bg-surface-container-high text-on-surface text-sm rounded-2xl rounded-br-md max-w-[85%]">
+                            {msg.text}
+                          </div>
+                        ) : (
+                          <div className="w-full">
+                            {msg.type === 'replanning' ? (
+                              <div className="flex items-center gap-3">
+                                <Loader2 className="w-4 h-4 animate-spin text-primary flex-shrink-0" />
+                                <span className="text-sm text-on-surface-variant">{msg.text}</span>
+                              </div>
+                            ) : msg.type === 'confirm' && !msg.confirmed ? (
+                              <div>
+                                <p className="text-sm text-on-surface leading-relaxed mb-3">{msg.text}</p>
+                                <div className="flex gap-2">
+                                  <button onClick={() => handleConfirmReplan(i, 'accepted')} className="px-4 py-1.5 bg-primary text-on-primary text-xs font-bold rounded-lg hover:opacity-90 transition-opacity">更新行程</button>
+                                  <button onClick={() => handleConfirmReplan(i, 'dismissed')} className="px-4 py-1.5 bg-surface-container-high text-on-surface-variant text-xs font-bold rounded-lg hover:bg-surface-container-highest transition-colors">忽略</button>
+                                </div>
+                              </div>
+                            ) : msg.type === 'confirm' && msg.confirmed ? (
+                              <span className={`text-sm ${msg.confirmed === 'accepted' ? 'text-emerald-600' : 'text-on-surface-variant'}`}>{msg.text}</span>
+                            ) : (
+                              <div>
+                                <p className="text-[14px] text-on-surface leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                                <div className="flex items-center gap-0.5 mt-2">
+                                  {/* Copy */}
+                                  <button className="w-6 h-6 rounded flex items-center justify-center text-on-surface-variant/30 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                      <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                                    </svg>
+                                  </button>
+                                  {/* Add */}
+                                  <button className="w-6 h-6 rounded flex items-center justify-center text-on-surface-variant/30 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                                      <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                                    </svg>
+                                  </button>
+                                  {/* Thumbs up */}
+                                  <button className="w-6 h-6 rounded flex items-center justify-center text-on-surface-variant/30 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors">
+                                    <ThumbsUp className="w-3 h-3" />
+                                  </button>
+                                  {/* Thumbs down */}
+                                  <button className="w-6 h-6 rounded flex items-center justify-center text-on-surface-variant/30 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/>
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                  {chatLoading && chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'user' && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="flex items-center gap-1.5 py-1"
+                    >
+                      <span className="text-[13px] text-on-surface-variant/50 select-none">Thinking</span>
+                      {[0, 140, 280].map((delay) => (
+                        <span
+                          key={delay}
+                          className="w-1 h-1 bg-on-surface-variant/40 rounded-full animate-bounce"
+                          style={{ animationDelay: `${delay}ms`, animationDuration: '900ms' }}
+                        />
+                      ))}
+                    </motion.div>
+                  )}
+                  <div ref={chatEndRef} />
                 </div>
-              ))}
-            </div>
-          )}
-          {chatError && (
-            <div className="w-full max-w-3xl bg-red-50 border border-red-200 rounded-xl px-4 py-2 text-sm text-red-700 pointer-events-auto">
-              {chatError}
-            </div>
-          )}
-          <div className="w-full max-w-3xl bg-white/80 backdrop-blur-xl border border-outline-variant/20 rounded-2xl h-14 shadow-[0_8px_32px_rgba(87,94,112,0.08)] flex items-center px-3 gap-3 pointer-events-auto">
-            <button className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-low transition-colors">
-              <Plus className="w-5 h-5" />
-            </button>
-            <input 
-              type="text" 
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !chatLoading && handleRefine()}
-              placeholder="继续优化行程，例如：帮我把预算控制在4000以内" 
-              className="flex-grow bg-transparent border-none focus:ring-0 text-sm text-on-surface placeholder-outline outline-none"
-              disabled={chatLoading}
-            />
-            <button 
-              onClick={handleRefine}
-              disabled={chatLoading || !inputValue.trim()}
-              className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-on-primary hover:opacity-90 transition-opacity shadow-md shadow-primary/20 disabled:opacity-50"
+
+                {/* Error */}
+                {chatError && (
+                  <div className="mx-3 mb-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-xs text-red-700">
+                    {chatError}
+                  </div>
+                )}
+
+                {/* ── Input Area ── */}
+                <div className="p-3 flex-shrink-0">
+                  <div className="rounded-xl border border-outline-variant/20 focus-within:border-primary/50 focus-within:shadow-[0_0_0_2px_rgba(103,80,164,0.1)] transition-all">
+                    <div className="px-3.5 pt-3 pb-1">
+                      <input
+                        type="text"
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && !chatLoading && handleRefine()}
+                        placeholder="Do anything with AI..."
+                        className="w-full bg-transparent border-none focus:ring-0 text-sm text-on-surface placeholder-outline/40 outline-none"
+                        disabled={chatLoading}
+                        autoFocus
+                      />
+                    </div>
+                    <div className="flex items-center justify-between px-2.5 pb-2.5 pt-1">
+                      <div className="flex items-center gap-0.5">
+                        <button className="w-7 h-7 rounded-md flex items-center justify-center text-on-surface-variant/40 hover:bg-surface-container-low hover:text-on-surface-variant transition-colors">
+                          <Plus className="w-4 h-4" />
+                        </button>
+                        <button className="w-7 h-7 rounded-md flex items-center justify-center text-on-surface-variant/40 hover:bg-surface-container-low hover:text-on-surface-variant transition-colors">
+                          <SlidersHorizontal className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-on-surface-variant/35 px-1.5 select-none">Auto</span>
+                        <button className="w-7 h-7 rounded-md flex items-center justify-center text-on-surface-variant/40 hover:bg-surface-container-low hover:text-on-surface-variant transition-colors">
+                          <Mic className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={handleRefine}
+                          disabled={chatLoading || !inputValue.trim()}
+                          className="w-7 h-7 rounded-full flex items-center justify-center bg-primary/10 text-primary hover:bg-primary hover:text-on-primary disabled:opacity-25 disabled:hover:bg-primary/10 disabled:hover:text-primary transition-all"
+                        >
+                          {chatLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUp className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Floating Toggle Button with AI Mascot */}
+          <div className="relative">
+            {/* Pulse glow ring */}
+            {!chatOpen && (
+              <motion.div
+                className="absolute inset-0 rounded-full bg-primary/20"
+                animate={{ scale: [1, 1.5, 1.5], opacity: [0.5, 0, 0] }}
+                transition={{ duration: 2, repeat: Infinity, ease: 'easeOut' }}
+              />
+            )}
+            <motion.button
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
+              onClick={() => setChatOpen(o => !o)}
+              className={`relative w-13 h-13 rounded-full shadow-xl flex items-center justify-center transition-all duration-300 ${
+                chatOpen
+                  ? 'bg-surface-container-highest text-on-surface-variant shadow-black/10'
+                  : 'bg-gradient-to-br from-primary via-primary to-primary/80 text-on-primary shadow-primary/30'
+              }`}
+              style={{ width: 52, height: 52 }}
             >
-              {chatLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4 ml-0.5" />}
-            </button>
+              <AnimatePresence mode="wait">
+                {chatOpen ? (
+                  <motion.span key="close" initial={{ rotate: -90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: 90, opacity: 0 }} transition={{ duration: 0.15 }}>
+                    <X className="w-5 h-5" />
+                  </motion.span>
+                ) : (
+                  <motion.span
+                    key="open"
+                    initial={{ scale: 0.5, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1, y: [0, -2, 0] }}
+                    exit={{ scale: 0.5, opacity: 0 }}
+                    transition={{ scale: { duration: 0.2 }, opacity: { duration: 0.2 }, y: { duration: 2.5, repeat: Infinity, ease: 'easeInOut' } }}
+                  >
+                    {/* Custom AI mascot SVG */}
+                    <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      {/* Head */}
+                      <circle cx="16" cy="16" r="12" fill="white" opacity="0.95"/>
+                      {/* Left eye */}
+                      <ellipse cx="12" cy="14.5" rx="1.8" ry="2.2" fill="#334155">
+                        <animate attributeName="ry" values="2.2;0.4;2.2" dur="3s" repeatCount="indefinite" begin="1s"/>
+                      </ellipse>
+                      {/* Right eye */}
+                      <ellipse cx="20" cy="14.5" rx="1.8" ry="2.2" fill="#334155">
+                        <animate attributeName="ry" values="2.2;0.4;2.2" dur="3s" repeatCount="indefinite" begin="1s"/>
+                      </ellipse>
+                      {/* Smile */}
+                      <path d="M11.5 19.5 Q16 23 20.5 19.5" stroke="#334155" strokeWidth="1.6" strokeLinecap="round" fill="none"/>
+                      {/* Sparkle top-right */}
+                      <g transform="translate(24, 5)">
+                        <path d="M0 -3 L0.8 -0.8 L3 0 L0.8 0.8 L0 3 L-0.8 0.8 L-3 0 L-0.8 -0.8 Z" fill="white" opacity="0.9">
+                          <animate attributeName="opacity" values="0.9;0.3;0.9" dur="1.5s" repeatCount="indefinite"/>
+                          <animateTransform attributeName="transform" type="rotate" values="0;180;360" dur="4s" repeatCount="indefinite"/>
+                        </path>
+                      </g>
+                      {/* Sparkle top-left */}
+                      <g transform="translate(6, 3)">
+                        <path d="M0 -2 L0.5 -0.5 L2 0 L0.5 0.5 L0 2 L-0.5 0.5 L-2 0 L-0.5 -0.5 Z" fill="white" opacity="0.7">
+                          <animate attributeName="opacity" values="0.7;0.2;0.7" dur="2s" repeatCount="indefinite" begin="0.5s"/>
+                          <animateTransform attributeName="transform" type="rotate" values="0;-180;-360" dur="5s" repeatCount="indefinite"/>
+                        </path>
+                      </g>
+                    </svg>
+                  </motion.span>
+                )}
+              </AnimatePresence>
+            </motion.button>
           </div>
         </div>
       </main>
