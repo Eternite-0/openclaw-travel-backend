@@ -1,0 +1,51 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", ui-serif, Georgia, serif;
+  
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f1f4f7;
+  --color-surface-container: #eaeef2;
+  --color-surface-container-high: #e2e9ee;
+  --color-surface-container-highest: #dbe4ea;
+  --color-surface: #f8f9fb;
+  --color-on-surface: #2b3438;
+  --color-on-surface-variant: #586065;
+  --color-outline: #737c81;
+  --color-outline-variant: #aab3b9;
+  --color-primary: #575e70;
+  --color-primary-dim: #4b5264;
+  --color-on-primary: #f7f7ff;
+  --color-primary-container: #dce2f7;
+  --color-on-primary-container: #4b5263;
+  --color-secondary-container: #dce2f3;
+  --color-on-secondary-container: #4b525f;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--color-surface);
+  -webkit-font-smoothing: antialiased;
+}
+
+.card-pattern-waves {
+  background-image: radial-gradient(circle at 2px 2px, rgba(0,0,0,0.03) 1px, transparent 0);
+  background-size: 12px 12px;
+}
+
+.card-pattern-dots {
+  background-image: radial-gradient(rgba(0,0,0,0.04) 1px, transparent 0);
+  background-size: 8px 8px;
+}
+
+.card-pattern-mountains {
+  background-image: linear-gradient(135deg, rgba(0,0,0,0.02) 25%, transparent 25%), linear-gradient(225deg, rgba(0,0,0,0.02) 25%, transparent 25%);
+  background-size: 20px 20px;
+}
+
+.card-pattern-geo {
+  background-image: linear-gradient(30deg, rgba(0,0,0,0.02) 12%, transparent 12.5%, transparent 87%, rgba(0,0,0,0.02) 87.5%, rgba(0,0,0,0.02)), linear-gradient(150deg, rgba(0,0,0,0.02) 12%, transparent 12.5%, transparent 87%, rgba(0,0,0,0.02) 87.5%, rgba(0,0,0,0.02)), linear-gradient(30deg, rgba(0,0,0,0.02) 12%, transparent 12.5%, transparent 87%, rgba(0,0,0,0.02) 87.5%, rgba(0,0,0,0.02)), linear-gradient(150deg, rgba(0,0,0,0.02) 12%, transparent 12.5%, transparent 87%, rgba(0,0,0,0.02) 87.5%, rgba(0,0,0,0.02)), linear-gradient(60deg, rgba(0,0,0,0.04) 25%, transparent 25.5%, transparent 75%, rgba(0,0,0,0.04) 75%, rgba(0,0,0,0.04)), linear-gradient(60deg, rgba(0,0,0,0.04) 25%, transparent 25.5%, transparent 75%, rgba(0,0,0,0.04) 75%, rgba(0,0,0,0.04));
+  background-size: 20px 35px;
+}
