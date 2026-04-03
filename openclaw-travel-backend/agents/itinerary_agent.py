@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class ItineraryAgent(BaseSpecialistAgent):
     agent_name = "itinerary_agent"
-    display_name = "📋 行程生成"
+    display_name = "行程生成"
     output_schema = FinalItinerary
 
     SYSTEM_PROMPT_TEMPLATE = """你是"智慧旅行助手"系统中最核心的行程生成专家（ItineraryAgent）。
@@ -154,4 +154,4 @@ created_at: {created_at}
     def _summarize(self, result: BaseModel) -> str:
         r: FinalItinerary = result  # type: ignore[assignment]
         highlights_preview = r.highlights[0] if r.highlights else "行程已生成"
-        return f"✅ {len(r.days)}天行程完成 | {highlights_preview[:40]}"
+        return f"{len(r.days)}天行程完成，{highlights_preview[:40]}"

@@ -10,7 +10,7 @@ from core.schemas import AttractionResult
 
 class AttractionAgent(BaseSpecialistAgent):
     agent_name = "attraction_agent"
-    display_name = "🗺️ 景点规划"
+    display_name = "景点规划"
     output_schema = AttractionResult
 
     SYSTEM_PROMPT_TEMPLATE = """你是"智慧旅行助手"系统中的景点规划专家（AttractionAgent）。

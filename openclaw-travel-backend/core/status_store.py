@@ -10,14 +10,14 @@ from core.schemas import AgentStatus, TaskStatus
 logger = logging.getLogger(__name__)
 
 _AGENT_DISPLAY_NAMES: dict[str, str] = {
-    "intent_parser": "🧠 意图解析",
-    "currency_agent": "💱 汇率分析",
-    "budget_agent": "💰 预算规划",
-    "flight_agent": "✈️ 航班查询",
-    "hotel_agent": "🏨 酒店推荐",
-    "attraction_agent": "🗺️ 景点规划",
-    "weather_agent": "🌤️ 天气预报",
-    "itinerary_agent": "📋 行程生成",
+    "intent_parser": "意图解析",
+    "currency_agent": "汇率分析",
+    "budget_agent": "预算规划",
+    "flight_agent": "航班查询",
+    "hotel_agent": "酒店推荐",
+    "attraction_agent": "景点规划",
+    "weather_agent": "天气预报",
+    "itinerary_agent": "行程生成",
 }
 
 _FALLBACK_STORE: dict[str, dict] = {}

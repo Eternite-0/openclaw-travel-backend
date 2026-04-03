@@ -10,7 +10,7 @@ from core.schemas import BudgetBreakdown
 
 class BudgetAgent(BaseSpecialistAgent):
     agent_name = "budget_agent"
-    display_name = "💰 预算规划"
+    display_name = "预算规划"
     output_schema = BudgetBreakdown
 
     SYSTEM_PROMPT_TEMPLATE = """你是"智慧旅行助手"系统中的预算规划专家（BudgetAgent）。

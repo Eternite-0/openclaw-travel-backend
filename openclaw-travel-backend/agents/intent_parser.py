@@ -8,7 +8,7 @@ from core.schemas import TravelIntent
 
 class IntentParserAgent(BaseSpecialistAgent):
     agent_name = "intent_parser"
-    display_name = "🧠 意图解析"
+    display_name = "意图解析"
     output_schema = TravelIntent
 
     SYSTEM_PROMPT_TEMPLATE = """你是"智慧旅行助手"系统中的意图解析专家（IntentParserAgent）。

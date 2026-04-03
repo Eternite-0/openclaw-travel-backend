@@ -4,7 +4,8 @@ import {
   Bell, Settings, Map as MapIcon, History, PlusCircle, UserCog,
   Share, MapPin, Sun, ThumbsUp, Train, Hotel, Clock, Wallet,
   Mountain, Network, Plus, Send, User, Bot, Umbrella, Users, ArrowUp,
-  Loader2, CheckCircle2, CircleDashed, XCircle, CalendarDays, Plane, ChevronRight
+  Loader2, CheckCircle2, CircleDashed, XCircle, CalendarDays, Plane, ChevronRight,
+  Sparkles, Banknote, Calculator, Compass, CloudSun, Route, type LucideIcon,
 } from 'lucide-react';
 
 // ── API Types ──────────────────────────────────────────────────────────────
@@ -30,11 +31,13 @@ interface TaskStatus {
 }
 
 interface ChatResponse {
-  task_id: string;
+  task_id: string | null;
   session_id: string;
   message: string;
-  status_poll_url: string;
-  result_url: string;
+  status_poll_url: string | null;
+  result_url: string | null;
+  response_type: 'quick' | 'pipeline';
+  quick_reply: string | null;
 }
 
 interface FlightOption {
@@ -127,15 +130,26 @@ interface FinalItinerary {
 
 // Placeholder agent names shown while waiting for first poll
 const AGENT_PLACEHOLDERS: AgentStatus[] = [
-  { agent_name: 'intent_parser', display_name: '🧠 意图解析', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
-  { agent_name: 'currency_agent', display_name: '💱 汇率分析', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
-  { agent_name: 'budget_agent', display_name: '💰 预算规划', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
-  { agent_name: 'flight_agent', display_name: '✈️ 航班查询', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
-  { agent_name: 'hotel_agent', display_name: '🏨 酒店推荐', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
-  { agent_name: 'attraction_agent', display_name: '🗺️ 景点规划', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
-  { agent_name: 'weather_agent', display_name: '🌤️ 天气预报', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
-  { agent_name: 'itinerary_agent', display_name: '📋 行程生成', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
+  { agent_name: 'intent_parser', display_name: '意图解析', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
+  { agent_name: 'currency_agent', display_name: '汇率分析', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
+  { agent_name: 'budget_agent', display_name: '预算规划', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
+  { agent_name: 'flight_agent', display_name: '航班查询', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
+  { agent_name: 'hotel_agent', display_name: '酒店推荐', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
+  { agent_name: 'attraction_agent', display_name: '景点规划', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
+  { agent_name: 'weather_agent', display_name: '天气预报', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
+  { agent_name: 'itinerary_agent', display_name: '行程生成', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
 ];
+
+const AGENT_STYLE: Record<string, { icon: LucideIcon; color: string; bg: string; activeBg: string }> = {
+  intent_parser:    { icon: Sparkles,   color: 'text-indigo-500', bg: 'bg-indigo-50',  activeBg: 'bg-indigo-100' },
+  currency_agent:   { icon: Banknote,   color: 'text-amber-500',  bg: 'bg-amber-50',   activeBg: 'bg-amber-100' },
+  budget_agent:     { icon: Calculator,  color: 'text-emerald-500', bg: 'bg-emerald-50', activeBg: 'bg-emerald-100' },
+  flight_agent:     { icon: Plane,      color: 'text-sky-500',    bg: 'bg-sky-50',     activeBg: 'bg-sky-100' },
+  hotel_agent:      { icon: Hotel,      color: 'text-rose-500',   bg: 'bg-rose-50',    activeBg: 'bg-rose-100' },
+  attraction_agent: { icon: Compass,    color: 'text-violet-500', bg: 'bg-violet-50',  activeBg: 'bg-violet-100' },
+  weather_agent:    { icon: CloudSun,   color: 'text-orange-500', bg: 'bg-orange-50',  activeBg: 'bg-orange-100' },
+  itinerary_agent:  { icon: Route,      color: 'text-teal-500',   bg: 'bg-teal-50',    activeBg: 'bg-teal-100' },
+};
 
 // ── API Functions ──────────────────────────────────────────────────────────
 
@@ -334,25 +348,39 @@ function AnimatedAgentMessage({ agentName }: { agentName: string }) {
 
 // ── App ─────────────────────────────────────────────────────────────────────
 
+interface RunningTask {
+  taskId: string;
+  query: string;
+  startedAt: string;
+}
+
 export default function App() {
   const [currentView, setCurrentView] = useState<'home' | 'processing' | 'itinerary' | 'history'>('home');
   const [taskId, setTaskId] = useState<string | null>(null);
   const [sessionId] = useState(() => crypto.randomUUID());
   const [itinerary, setItinerary] = useState<FinalItinerary | null>(null);
+  const [runningTask, setRunningTask] = useState<RunningTask | null>(null);
 
-  const handleNavigateToProcessing = useCallback((newTaskId: string) => {
+  const handleNavigateToProcessing = useCallback((newTaskId: string, query?: string) => {
     setTaskId(newTaskId);
+    setRunningTask({ taskId: newTaskId, query: query ?? '旅行规划中...', startedAt: new Date().toISOString() });
     setCurrentView('processing');
   }, []);
 
   const handleProcessingComplete = useCallback((result: FinalItinerary) => {
     setItinerary(result);
+    setRunningTask(null);
     setCurrentView('itinerary');
   }, []);
 
   const handleViewHistoryItem = useCallback((result: FinalItinerary) => {
     setItinerary(result);
     setCurrentView('itinerary');
+  }, []);
+
+  const handleResumeTask = useCallback((tid: string) => {
+    setTaskId(tid);
+    setCurrentView('processing');
   }, []);
 
   return (
@@ -435,7 +463,7 @@ export default function App() {
           <ItineraryView key="itinerary" itinerary={itinerary} sessionId={sessionId} onRefine={handleNavigateToProcessing} />
         )}
         {currentView === 'history' && (
-          <HistoryView key="history" onViewItem={handleViewHistoryItem} />
+          <HistoryView key="history" onViewItem={handleViewHistoryItem} runningTask={runningTask} onResumeTask={handleResumeTask} />
         )}
       </AnimatePresence>
     </div>
@@ -447,6 +475,13 @@ function ProcessingView({ taskId, onComplete }: { taskId: string; onComplete: (r
   const [overallStatus, setOverallStatus] = useState<string>('pending');
   const [progressPct, setProgressPct] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  useEffect(() => {
+    const t0 = Date.now();
+    const iv = setInterval(() => setElapsedSec(Math.floor((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(iv);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -486,6 +521,9 @@ function ProcessingView({ taskId, onComplete }: { taskId: string; onComplete: (r
     };
   }, [taskId, onComplete]);
 
+  const doneCount = agents.filter(a => a.status === 'done').length;
+  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
   return (
     <motion.main
       initial={{ opacity: 0, scale: 0.98 }}
@@ -494,101 +532,148 @@ function ProcessingView({ taskId, onComplete }: { taskId: string; onComplete: (r
       transition={{ duration: 0.5, ease: "easeInOut" }}
       className="ml-[220px] pt-16 min-h-screen bg-surface-container-lowest flex flex-col items-center justify-center relative overflow-hidden"
     >
-      <div className="absolute inset-0 bg-[radial-gradient(circle,#e2e8f0_1px,transparent_1px)] [background-size:40px_40px] opacity-40 pointer-events-none"></div>
+      <div className="absolute inset-0 bg-[radial-gradient(circle,#e2e8f0_1px,transparent_1px)] [background-size:40px_40px] opacity-40 pointer-events-none" />
 
-      <div className="max-w-md w-full space-y-8 p-10 bg-white/80 backdrop-blur-xl rounded-[2rem] border border-outline-variant/20 shadow-[0_8px_32px_rgba(87,94,112,0.08)] relative z-10">
-        <div className="flex flex-col items-center gap-4">
+      <div className="max-w-lg w-full p-10 bg-white/80 backdrop-blur-xl rounded-[2rem] border border-outline-variant/20 shadow-[0_8px_32px_rgba(87,94,112,0.08)] relative z-10">
+        {/* Header */}
+        <div className="flex flex-col items-center gap-3 mb-8">
           <div className="relative">
-            <div className="absolute inset-0 bg-primary/20 rounded-full blur-xl animate-pulse"></div>
-            <div className="w-16 h-16 bg-surface-container-low rounded-2xl flex items-center justify-center relative z-10 border border-outline-variant/20 shadow-sm">
+            <div className="absolute inset-0 bg-primary/15 rounded-full blur-xl animate-pulse" />
+            <div className="w-14 h-14 bg-surface-container-low rounded-2xl flex items-center justify-center relative z-10 border border-outline-variant/15 shadow-sm">
               {errorMsg ? (
-                <XCircle className="w-8 h-8 text-red-500" />
+                <XCircle className="w-7 h-7 text-red-500" />
               ) : overallStatus === 'done' ? (
-                <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+                <CheckCircle2 className="w-7 h-7 text-emerald-500" />
               ) : (
-                <Bot className="w-8 h-8 text-primary animate-bounce" />
+                <Network className="w-7 h-7 text-primary" />
               )}
             </div>
           </div>
           <div className="text-center">
-            <h2 className="text-xl font-bold text-on-surface tracking-tight">
+            <h2 className="text-lg font-bold text-on-surface tracking-tight">
               {errorMsg ? '规划失败' : overallStatus === 'done' ? '规划完成！' : '多智能体协同规划中'}
             </h2>
-            <p className="text-xs text-on-surface-variant mt-1">
+            <p className="text-xs text-on-surface-variant mt-0.5">
               {errorMsg || (overallStatus === 'done' ? '正在跳转至行程详情...' : 'OpenClaw 正在为您生成专属行程')}
             </p>
           </div>
         </div>
 
         {errorMsg && (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 mb-6">
             {errorMsg}
           </div>
         )}
 
-        <div className="space-y-4 mt-8">
-          {agents.map((agent) => {
+        {/* Agent Timeline */}
+        <div className="space-y-1">
+          {agents.map((agent, index) => {
+            const style = AGENT_STYLE[agent.agent_name];
+            const Icon = style?.icon ?? CircleDashed;
             const isPending = agent.status === 'pending';
             const isActive = agent.status === 'running';
             const isDone = agent.status === 'done';
             const isError = agent.status === 'error';
+            const isLast = index === agents.length - 1;
+
             return (
-              <div
-                key={agent.agent_name}
-                className={`flex items-start gap-4 transition-all duration-500 ${!isPending ? 'opacity-100 translate-x-0' : 'opacity-25 -translate-x-2'}`}
-              >
-                <div className="flex-shrink-0 mt-0.5">
-                  {isDone ? (
-                    <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                  ) : isActive ? (
-                    <Loader2 className="w-5 h-5 text-primary animate-spin" />
-                  ) : isError ? (
-                    <XCircle className="w-5 h-5 text-red-500" />
-                  ) : (
-                    <CircleDashed className="w-5 h-5 text-outline" />
-                  )}
-                </div>
+              <div key={agent.agent_name} className="relative">
+                {/* Connecting line */}
+                {!isLast && (
+                  <div className={`absolute left-8 top-[40px] w-px h-[calc(100%-16px)] z-[1] transition-colors duration-500 ${
+                    isDone ? 'bg-emerald-200' : 'bg-surface-container-high'
+                  }`} />
+                )}
 
-                <div className="flex-1 min-w-0">
-                  <span className={`text-sm leading-tight ${
-                    isActive ? 'text-primary font-semibold' :
-                    isDone ? 'text-on-surface font-medium' :
-                    isError ? 'text-red-600 font-medium' :
-                    'text-on-surface-variant font-medium'
+                <div className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-500 ${
+                  isActive ? 'bg-primary/[0.04] ring-1 ring-primary/15' : ''
+                } ${isPending ? 'opacity-35' : 'opacity-100'}`}>
+                  {/* Agent icon */}
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 relative z-[2] transition-all duration-500 ${
+                    isDone ? 'bg-emerald-50' :
+                    isActive ? (style?.activeBg ?? 'bg-surface-container-low') :
+                    isError ? 'bg-red-50' :
+                    'bg-surface-container-low'
                   }`}>
-                    {agent.display_name}
-                  </span>
+                    {isDone ? (
+                      <CheckCircle2 className="w-[18px] h-[18px] text-emerald-500" />
+                    ) : isError ? (
+                      <XCircle className="w-[18px] h-[18px] text-red-500" />
+                    ) : isActive ? (
+                      <Icon className={`w-[18px] h-[18px] ${style?.color ?? 'text-primary'}`} />
+                    ) : (
+                      <Icon className="w-[18px] h-[18px] text-on-surface-variant/30" />
+                    )}
+                  </div>
 
-                  {isActive && (
-                    <AnimatedAgentMessage agentName={agent.agent_name} />
-                  )}
+                  {/* Name & message */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[13px] leading-tight ${
+                        isActive ? 'text-on-surface font-semibold' :
+                        isDone ? 'text-on-surface font-medium' :
+                        isError ? 'text-red-600 font-medium' :
+                        'text-on-surface-variant font-medium'
+                      }`}>
+                        {agent.display_name}
+                      </span>
+                      {isActive && (
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-primary" />
+                        </span>
+                      )}
+                    </div>
 
-                  {isDone && agent.result_summary && (
-                    <span className="text-[11px] text-emerald-600/80 font-normal block mt-0.5 truncate">
-                      {agent.result_summary}
-                    </span>
-                  )}
+                    {isActive && <AnimatedAgentMessage agentName={agent.agent_name} />}
 
-                  {isError && agent.message && (
-                    <span className="text-[11px] text-red-500/80 block mt-0.5 truncate">
-                      {agent.message}
-                    </span>
-                  )}
+                    {isDone && agent.result_summary && (
+                      <span className="text-[11px] text-emerald-600/70 font-normal block mt-0.5 truncate">
+                        {agent.result_summary}
+                      </span>
+                    )}
+
+                    {isError && agent.message && (
+                      <span className="text-[11px] text-red-500/80 block mt-0.5 truncate">
+                        {agent.message}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Right status indicator */}
+                  <div className="flex-shrink-0 w-5 flex justify-center">
+                    {isDone && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+                    {isActive && <Loader2 className="w-4 h-4 text-primary animate-spin" />}
+                  </div>
                 </div>
               </div>
             );
           })}
         </div>
 
+        {/* Progress footer */}
         {!errorMsg && (
-          <div className="mt-2">
-            <div className="h-1.5 bg-surface-container-high rounded-full overflow-hidden">
-              <div
-                className="h-full bg-primary rounded-full transition-all duration-700 ease-out"
-                style={{ width: `${progressPct}%` }}
-              />
+          <div className="mt-6 space-y-2.5">
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-on-surface-variant flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5" />
+                已用时 {fmtTime(elapsedSec)}
+              </span>
+              <span className="text-on-surface font-bold tabular-nums">{progressPct}%</span>
             </div>
-            <p className="text-[11px] text-on-surface-variant text-right mt-1">{progressPct}%</p>
+            <div className="h-2 bg-surface-container-high rounded-full overflow-hidden">
+              <motion.div
+                className="h-full rounded-full bg-gradient-to-r from-primary via-primary/80 to-primary/60 relative"
+                initial={{ width: 0 }}
+                animate={{ width: `${progressPct}%` }}
+                transition={{ duration: 0.8, ease: 'easeOut' }}
+              >
+                <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.25)_50%,transparent_100%)] animate-[shimmer_2s_infinite]" />
+              </motion.div>
+            </div>
+            <p className="text-[11px] text-on-surface-variant">
+              {doneCount} / {agents.length} 个智能体已完成
+            </p>
           </div>
         )}
       </div>
@@ -596,7 +681,7 @@ function ProcessingView({ taskId, onComplete }: { taskId: string; onComplete: (r
   );
 }
 
-function HomeView({ sessionId, onNavigate }: { sessionId: string; onNavigate: (taskId: string) => void }) {
+function HomeView({ sessionId, onNavigate }: { sessionId: string; onNavigate: (taskId: string, query: string) => void }) {
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -608,7 +693,11 @@ function HomeView({ sessionId, onNavigate }: { sessionId: string; onNavigate: (t
     setErrorMsg(null);
     try {
       const res = await postChat(text, sessionId);
-      onNavigate(res.task_id);
+      if (res.task_id) {
+        onNavigate(res.task_id, text);
+      } else {
+        setLoading(false);
+      }
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
       setLoading(false);
@@ -703,7 +792,7 @@ function QuickStartCard({ icon, title, desc, onClick }: { icon: ReactNode; title
   );
 }
 
-function HistoryView({ onViewItem }: { onViewItem: (r: FinalItinerary) => void }) {
+function HistoryView({ onViewItem, runningTask, onResumeTask }: { onViewItem: (r: FinalItinerary) => void; runningTask: RunningTask | null; onResumeTask: (taskId: string) => void }) {
   const [tasks, setTasks] = useState<ItinerarySummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -750,7 +839,7 @@ function HistoryView({ onViewItem }: { onViewItem: (r: FinalItinerary) => void }
             <History className="w-6 h-6 text-primary" />
             <h1 className="text-2xl font-extrabold text-on-surface tracking-tight">历史规划</h1>
           </div>
-          <p className="text-on-surface-variant text-sm">所有已完成的 AI 行程规划记录</p>
+          <p className="text-on-surface-variant text-sm">所有 AI 行程规划记录</p>
         </div>
 
         {errorMsg && (
@@ -759,12 +848,53 @@ function HistoryView({ onViewItem }: { onViewItem: (r: FinalItinerary) => void }
           </div>
         )}
 
+        {/* Running task card */}
+        {runningTask && (
+          <div className="mb-6">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant mb-3">进行中</p>
+            <button
+              onClick={() => onResumeTask(runningTask.taskId)}
+              className="group w-full text-left bg-white/80 hover:bg-white border border-primary/20 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 hover:-translate-y-0.5"
+            >
+              <div className="h-24 bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center relative overflow-hidden">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_30%,rgba(var(--color-primary)/0.2),transparent_60%)]" />
+                <div className="flex flex-col items-center gap-2 relative z-10">
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary" />
+                    </span>
+                    <span className="text-primary font-bold text-sm">规划进行中...</span>
+                  </div>
+                  <span className="text-[11px] text-primary/60 max-w-[240px] truncate px-2 text-center">{runningTask.query}</span>
+                </div>
+              </div>
+              <div className="p-4 space-y-2">
+                <div className="flex items-center gap-2 text-on-surface-variant">
+                  <CalendarDays className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span className="text-xs">{new Date(runningTask.startedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t border-outline-variant/10">
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary flex items-center gap-1.5">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    规划中
+                  </span>
+                  <div className="flex items-center gap-1 text-primary text-xs font-semibold group-hover:gap-2 transition-all">
+                    <span>查看进度</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </div>
+                </div>
+              </div>
+            </button>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex flex-col items-center justify-center py-24 gap-4">
             <Loader2 className="w-8 h-8 text-primary animate-spin" />
             <p className="text-on-surface-variant text-sm">加载历史记录中...</p>
           </div>
-        ) : tasks.length === 0 ? (
+        ) : tasks.length === 0 && !runningTask ? (
           <div className="flex flex-col items-center justify-center py-24 gap-4">
             <div className="w-16 h-16 rounded-2xl bg-surface-container-low flex items-center justify-center">
               <History className="w-8 h-8 text-outline" />
@@ -772,7 +902,9 @@ function HistoryView({ onViewItem }: { onViewItem: (r: FinalItinerary) => void }
             <p className="text-on-surface-variant text-sm font-medium">暂无历史规划记录</p>
             <p className="text-outline text-xs">新建一个旅行任务后将在此显示</p>
           </div>
-        ) : (
+        ) : tasks.length > 0 ? (
+          <>
+            {runningTask && <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant mb-3">已完成</p>}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {tasks.map((task) => (
               <button
@@ -827,7 +959,8 @@ function HistoryView({ onViewItem }: { onViewItem: (r: FinalItinerary) => void }
               </button>
             ))}
           </div>
-        )}
+          </>
+        ) : null}
       </div>
     </motion.main>
   );
@@ -838,13 +971,14 @@ function ItineraryView({
 }: {
   itinerary: FinalItinerary | null;
   sessionId: string;
-  onRefine: (taskId: string) => void;
+  onRefine: (taskId: string, query?: string) => void;
 }) {
   const [activeDay, setActiveDay] = useState(1);
   const [paymentState, setPaymentState] = useState<'idle' | 'processing' | 'success'>('idle');
   const [inputValue, setInputValue] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
 
   useEffect(() => { setActiveDay(1); }, [itinerary]);
 
@@ -863,11 +997,20 @@ function ItineraryView({
     if (!text || chatLoading) return;
     setChatLoading(true);
     setChatError(null);
+    setChatHistory(h => [...h, { role: 'user', text }]);
+    setInputValue('');
     try {
       const res = await postChat(text, sessionId);
-      setInputValue('');
-      onRefine(res.task_id);
+      if (res.response_type === 'quick' && res.quick_reply) {
+        setChatHistory(h => [...h, { role: 'assistant', text: res.quick_reply! }]);
+        setChatLoading(false);
+      } else if (res.task_id) {
+        onRefine(res.task_id, text);
+      } else {
+        setChatLoading(false);
+      }
     } catch (err: unknown) {
+      setChatHistory(h => h.slice(0, -1));
       setChatError(err instanceof Error ? err.message : String(err));
       setChatLoading(false);
     }
@@ -1225,8 +1368,33 @@ function ItineraryView({
           )}
         </section>
 
-        {/* Floating Input Bar */}
+        {/* Floating Chat Panel */}
         <div className="fixed bottom-6 left-[220px] right-[300px] flex flex-col items-center px-8 z-40 pointer-events-none gap-2">
+          {chatHistory.length > 0 && (
+            <div className="w-full max-w-3xl pointer-events-auto flex flex-col gap-2 mb-1 max-h-64 overflow-y-auto">
+              {chatHistory.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  {msg.role === 'assistant' && (
+                    <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center flex-shrink-0 mr-2 mt-0.5">
+                      <Bot className="w-4 h-4 text-on-primary" />
+                    </div>
+                  )}
+                  <div className={`max-w-[80%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
+                    msg.role === 'user'
+                      ? 'bg-primary text-on-primary rounded-br-sm'
+                      : 'bg-white/95 border border-outline-variant/20 text-on-surface rounded-bl-sm'
+                  }`}>
+                    {msg.text}
+                  </div>
+                  {msg.role === 'user' && (
+                    <div className="w-7 h-7 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0 ml-2 mt-0.5 overflow-hidden">
+                      <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuACslEmFEkkDsecolZboQtiihZzOYS-gyN9vjz8lgvu6hf4-AjhIy2VFMgxni3rdHq5tvLGuXW3dRPrfC3QuZzEYmylY4SaTVBitUSF29KO-STYVP8ZP8ggXkQ2Pp6aj8tV-dkmGQFNea-apQwAHE0pDVrILZ8CrN518uJcLrqGDHDvh5sxy__dhiXLfw_3oIo54BgsQwZ_O3lK5P4f5QCL_FC65v08Z5cI3aAq2JO-mSSeCU17pxGw3lP_j9Ghad8R3rN3bUYHTGsI" alt="User" className="h-full w-full object-cover" />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           {chatError && (
             <div className="w-full max-w-3xl bg-red-50 border border-red-200 rounded-xl px-4 py-2 text-sm text-red-700 pointer-events-auto">
               {chatError}

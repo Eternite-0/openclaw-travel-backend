@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class WeatherAgent(BaseSpecialistAgent):
     agent_name = "weather_agent"
-    display_name = "🌤️ 天气预报"
+    display_name = "天气预报"
     output_schema = WeatherResult
 
     SYSTEM_PROMPT_TEMPLATE = """你是"智慧旅行助手"系统中的天气预报专家（WeatherAgent）。

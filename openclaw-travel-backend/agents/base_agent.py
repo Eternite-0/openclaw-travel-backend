@@ -111,7 +111,8 @@ class BaseSpecialistAgent:
 
         logger.debug("Agent %s calling LLM", self.agent_name)
         last_exc: Exception | None = None
-        for attempt in range(2):
+        _retry_delays = [3, 6]
+        for attempt in range(3):
             try:
                 resp = await self._http.post(
                     f"{self._base_url}/chat/completions",
@@ -127,9 +128,10 @@ class BaseSpecialistAgent:
                 break
             except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError) as exc:
                 last_exc = exc
-                if attempt == 0:
-                    logger.warning("Agent %s attempt %d failed (%s), retrying in 3s...", self.agent_name, attempt + 1, exc)
-                    await asyncio.sleep(3)
+                if attempt < 2:
+                    delay = _retry_delays[attempt]
+                    logger.warning("Agent %s attempt %d failed (%s), retrying in %ds...", self.agent_name, attempt + 1, exc, delay)
+                    await asyncio.sleep(delay)
                 else:
                     raise
         if resp.status_code != 200:

@@ -10,7 +10,7 @@ from core.schemas import HotelResult
 
 class HotelAgent(BaseSpecialistAgent):
     agent_name = "hotel_agent"
-    display_name = "🏨 酒店推荐"
+    display_name = "酒店推荐"
     output_schema = HotelResult
 
     SYSTEM_PROMPT_TEMPLATE = """你是"智慧旅行助手"系统中的酒店推荐专家（HotelAgent）。

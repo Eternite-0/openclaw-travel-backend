@@ -10,7 +10,7 @@ from core.schemas import FlightResult
 
 class FlightAgent(BaseSpecialistAgent):
     agent_name = "flight_agent"
-    display_name = "✈️ 航班查询"
+    display_name = "航班查询"
     output_schema = FlightResult
 
     SYSTEM_PROMPT_TEMPLATE = """你是"智慧旅行助手"系统中的航班查询专家（FlightAgent）。

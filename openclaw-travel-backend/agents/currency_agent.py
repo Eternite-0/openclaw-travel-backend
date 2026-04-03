@@ -10,7 +10,7 @@ from core.schemas import CurrencyInfo, TravelIntent
 
 class CurrencyAgent(BaseSpecialistAgent):
     agent_name = "currency_agent"
-    display_name = "💱 汇率分析"
+    display_name = "汇率分析"
     output_schema = CurrencyInfo
 
     SYSTEM_PROMPT_TEMPLATE = """你是"智慧旅行助手"系统中的汇率分析专家（CurrencyAgent）。

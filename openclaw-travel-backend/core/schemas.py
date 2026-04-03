@@ -170,11 +170,13 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    task_id: str
+    task_id: Optional[str] = None
     session_id: str
     message: str
-    status_poll_url: str
-    result_url: str
+    status_poll_url: Optional[str] = None
+    result_url: Optional[str] = None
+    response_type: Literal["quick", "pipeline"] = "pipeline"
+    quick_reply: Optional[str] = None
 
 
 class HistoryResponse(BaseModel):
