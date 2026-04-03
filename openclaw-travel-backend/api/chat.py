@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
-from typing import Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 import httpx
@@ -152,10 +153,11 @@ _CLASSIFIER_PROMPT = """\
 
 
 async def _call_llm(
-    prompt: str,
+    prompt: Optional[str],
     llm_config: dict,
     max_tokens: int = 800,
     temperature: float = 0.3,
+    messages: Optional[list[dict[str, Any]]] = None,
 ) -> Optional[str]:
     """Call the LLM and return the raw content string, or None on failure."""
     settings = get_settings()
@@ -166,6 +168,7 @@ async def _call_llm(
     model = cfg.get("model", settings.openai_model)
 
     try:
+        payload_messages = messages or [{"role": "user", "content": prompt or ""}]
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 "%s/chat/completions" % base_url,
@@ -177,13 +180,22 @@ async def _call_llm(
                     "model": model,
                     "temperature": temperature,
                     "max_tokens": max_tokens,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": payload_messages,
                 },
             )
         if resp.status_code != 200:
             logger.warning("LLM returned status %s", resp.status_code)
             return None
-        return resp.json()["choices"][0]["message"]["content"].strip()
+        content = resp.json()["choices"][0]["message"]["content"]
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            chunks = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    chunks.append(part.get("text", ""))
+            return "\n".join([c for c in chunks if c]).strip()
+        return str(content).strip()
     except Exception as exc:
         logger.warning("LLM call failed: %s", exc)
         return None
@@ -200,6 +212,90 @@ def _format_history(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _strip_data_url_prefix(data_base64: str) -> str:
+    if data_base64.startswith("data:") and "," in data_base64:
+        return data_base64.split(",", 1)[1]
+    return data_base64
+
+
+def _decode_attachment_text(data_base64: str) -> Optional[str]:
+    try:
+        raw = base64.b64decode(_strip_data_url_prefix(data_base64), validate=False)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        return raw.decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+
+
+def _build_user_message_with_attachments(
+    message: str,
+    context: str,
+    history_section: str,
+    attachments: list[Any],
+) -> list[dict[str, Any]]:
+    content: list[dict[str, Any]] = [{
+        "type": "text",
+        "text": (
+            "你是一个友好的旅行规划助手。用户正在查看行程，请结合文本与附件内容回答。\n\n"
+            f"行程概要：\n{context}{history_section}\n\n"
+            f"用户：{message}\n\n"
+            "请直接回答，简洁友好，不超过200字。"
+        ),
+    }]
+
+    for att in attachments[:4]:
+        mime_type = (getattr(att, "mime_type", "") or "").lower()
+        name = getattr(att, "name", "attachment")
+        data_base64 = getattr(att, "data_base64", "") or ""
+        if not data_base64:
+            continue
+
+        if mime_type.startswith("image/"):
+            b64 = _strip_data_url_prefix(data_base64)
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime_type};base64,{b64}"},
+            })
+            continue
+
+        decoded = _decode_attachment_text(data_base64)
+        if decoded:
+            snippet = decoded.strip()[:6000]
+            if snippet:
+                content.append({
+                    "type": "text",
+                    "text": f"附件文本（{name}）:\n{snippet}",
+                })
+            continue
+
+        content.append({
+            "type": "text",
+            "text": f"收到附件：{name}（{mime_type or 'unknown'}），该文件不是可直接解析的文本。",
+        })
+
+    return [{"role": "user", "content": content}]
+
+
+def _serialize_attachments_for_history(attachments: Optional[list[Any]]) -> list[dict[str, Any]]:
+    if not attachments:
+        return []
+    serialized: list[dict[str, Any]] = []
+    for att in attachments[:6]:
+        mime_type = getattr(att, "mime_type", "") or "application/octet-stream"
+        serialized.append({
+            "name": getattr(att, "name", "attachment"),
+            "mime_type": mime_type,
+            "kind": "image" if mime_type.startswith("image/") else "file",
+            "data_base64": _strip_data_url_prefix(getattr(att, "data_base64", "") or ""),
+            "size_bytes": getattr(att, "size_bytes", None),
+        })
+    return serialized
+
+
 async def _quick_classify_and_reply(
     message: str,
     session_id: str,
@@ -207,6 +303,7 @@ async def _quick_classify_and_reply(
     redis_client,
     task_id: Optional[str] = None,
     frontend_context: Optional[str] = None,
+    attachments: Optional[list[Any]] = None,
 ) -> Optional[str]:
     """
     Redesigned chain:
@@ -226,6 +323,7 @@ async def _quick_classify_and_reply(
         max_short_term=get_settings().max_short_term_memory,
         redis_client=redis_client,
     )
+    history_attachments = _serialize_attachments_for_history(attachments)
     history = await memory.get_short_term()
     history_block = _format_history(history)
     history_section = (
@@ -237,15 +335,25 @@ async def _quick_classify_and_reply(
         # No modification keywords → guaranteed quick reply.
         # Call LLM just to generate a helpful answer (no classification needed).
         logger.info("[classify] No pipeline keywords in '%s' – quick path", msg[:60])
-        prompt = (
-            "你是一个友好的旅行规划助手。用户正在查看行程，请直接回答他的问题。\n\n"
-            "行程概要：\n%s%s\n\n"
-            "用户：%s\n\n"
-            "请直接回答，简洁友好，不超过200字。"
-        ) % (context, history_section, msg)
-        reply = await _call_llm(prompt, llm_config, max_tokens=400, temperature=0.5)
+        if attachments:
+            messages = _build_user_message_with_attachments(msg, context, history_section, attachments)
+            reply = await _call_llm(
+                prompt=None,
+                llm_config=llm_config,
+                max_tokens=500,
+                temperature=0.5,
+                messages=messages,
+            )
+        else:
+            prompt = (
+                "你是一个友好的旅行规划助手。用户正在查看行程，请直接回答他的问题。\n\n"
+                "行程概要：\n%s%s\n\n"
+                "用户：%s\n\n"
+                "请直接回答，简洁友好，不超过200字。"
+            ) % (context, history_section, msg)
+            reply = await _call_llm(prompt, llm_config, max_tokens=400, temperature=0.5)
         if reply:
-            await memory.add_message("user", msg)
+            await memory.add_message("user", msg, attachments=history_attachments)
             await memory.add_message("assistant", reply)
             return reply
         return "你好！有什么关于行程的问题可以问我哦 😊"
@@ -275,7 +383,7 @@ async def _quick_classify_and_reply(
 
         if parsed.get("reply"):
             reply = parsed["reply"]
-            await memory.add_message("user", msg)
+            await memory.add_message("user", msg, attachments=history_attachments)
             await memory.add_message("assistant", reply)
             return reply
         return "好的，让我看看能怎么帮你。"
@@ -292,6 +400,7 @@ async def _background_pipeline(
     llm_config: dict,
     redis_client,
     original_task_id: Optional[str] = None,
+    user_attachments: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     try:
         memory = MemoryManager(
@@ -312,6 +421,7 @@ async def _background_pipeline(
                 llm_config=llm_config,
                 db_session=db_session,
                 original_task_id=original_task_id,
+                user_attachments=user_attachments,
             )
     except Exception as exc:
         err_msg = f"{type(exc).__name__}: {exc}"
@@ -341,6 +451,7 @@ async def post_chat(
             redis_client=redis_client,
             task_id=body.task_id,
             frontend_context=body.itinerary_context,
+            attachments=body.attachments,
         )
         if quick_reply is not None:
             logger.info("[session:%s] Quick reply returned (no pipeline)", session_id)
@@ -352,19 +463,24 @@ async def post_chat(
             )
 
     # ── Pipeline path: full multi-agent planning ─────────────────────────
+    history_attachments = _serialize_attachments_for_history(body.attachments)
     task_id = str(uuid4())
     status_store = StatusStore(redis_client=redis_client)
     await status_store.init_task(task_id, session_id, ALL_AGENT_NAMES)
 
     asyncio.create_task(
         _background_pipeline(
-            user_message=body.message,
+            user_message=body.message + (
+                ("\n\n附件: " + ", ".join(a.name for a in body.attachments[:6]))
+                if body.attachments else ""
+            ),
             session_id=session_id,
             task_id=task_id,
             status_store=status_store,
             llm_config=llm_config,
             redis_client=redis_client,
             original_task_id=body.task_id,
+            user_attachments=history_attachments,
         )
     )
 

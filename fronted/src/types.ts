@@ -129,6 +129,11 @@ export interface RunningTask {
 export interface ChatMsg {
   role: 'user' | 'assistant';
   text: string;
+  attachments?: Array<{
+    name: string;
+    kind: 'image' | 'file';
+    data_url?: string;
+  }>;
   type?: 'replanning' | 'confirm';
   pendingResult?: FinalItinerary;
   confirmed?: 'accepted' | 'dismissed';
@@ -139,4 +144,24 @@ export interface AgentStyleConfig {
   color: string;
   bg: string;
   activeBg: string;
+}
+
+export interface Conversation {
+  conversation_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+  attachments?: Array<{
+    name: string;
+    kind?: 'image' | 'file';
+    mime_type?: string;
+    data_base64?: string;
+    size_bytes?: number;
+  }>;
 }

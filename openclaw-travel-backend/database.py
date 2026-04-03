@@ -19,6 +19,15 @@ class ItineraryRecord(SQLModel, table=True):
     status: str = "done"
 
 
+class ConversationRecord(SQLModel, table=True):
+    __tablename__ = "conversation"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    conversation_id: str = Field(index=True, unique=True)
+    title: str = "New AI chat"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 _engine = None
 
 

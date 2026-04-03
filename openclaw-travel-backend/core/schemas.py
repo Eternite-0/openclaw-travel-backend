@@ -165,10 +165,17 @@ class TaskStatus(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    class Attachment(BaseModel):
+        name: str
+        mime_type: str
+        data_base64: str
+        size_bytes: Optional[int] = None
+
     message: str
     session_id: str
     task_id: Optional[str] = None
     itinerary_context: Optional[str] = None
+    attachments: list[Attachment] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
@@ -205,3 +212,14 @@ class ItinerarySummary(BaseModel):
     duration_days: int
     budget_cny: float
     status: str
+
+
+class ConversationSummary(BaseModel):
+    conversation_id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConversationUpdate(BaseModel):
+    title: str

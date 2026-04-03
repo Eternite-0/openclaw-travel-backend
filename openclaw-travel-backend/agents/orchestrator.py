@@ -58,6 +58,7 @@ async def run_travel_pipeline(
     llm_config: dict,
     db_session: Session,
     original_task_id: Optional[str] = None,
+    user_attachments: Optional[list[dict[str, Any]]] = None,
 ) -> FinalItinerary:
     """
     Chief Orchestrator — smart follow-up aware execution plan.
@@ -69,7 +70,7 @@ async def run_travel_pipeline(
     Phase 4:              Persist to SQLite + update memory
     """
 
-    await memory.add_message("user", user_message)
+    await memory.add_message("user", user_message, attachments=user_attachments)
 
     # ── Phase 0: Load previous itinerary for this session ────────────────
     prev_itinerary: Optional[FinalItinerary] = None

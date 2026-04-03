@@ -35,11 +35,20 @@ class MemoryManager:
         self._key = f"session:{session_id}:history"
         self._ttl = 86400  # 24 hours
 
-    async def add_message(self, role: str, content: str) -> None:
-        entry = json.dumps(
-            {"role": role, "content": content, "timestamp": datetime.utcnow().isoformat()},
-            ensure_ascii=False,
-        )
+    async def add_message(
+        self,
+        role: str,
+        content: str,
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "role": role,
+            "content": content,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        if attachments:
+            payload["attachments"] = attachments
+        entry = json.dumps(payload, ensure_ascii=False)
         if self._redis is not None:
             try:
                 await self._redis.rpush(self._key, entry)

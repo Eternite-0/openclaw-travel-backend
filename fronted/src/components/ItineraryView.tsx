@@ -5,10 +5,15 @@ import remarkGfm from 'remark-gfm';
 import {
   Share, MapPin, Sun, ThumbsUp, Train, Hotel, Clock, Wallet,
   Mountain, Network, User, Bot, Loader2,
-  Plus, ArrowUp, X, Mic, SlidersHorizontal,
+  Plus, ArrowUp, X, Mic, SlidersHorizontal, ChevronDown, Check,
 } from 'lucide-react';
-import type { FinalItinerary, ChatMsg } from '../types';
-import { API_BASE, postChat, pollStatus, fetchResult } from '../api';
+import type { FinalItinerary, ChatMsg, Conversation } from '../types';
+import {
+  API_BASE, postChat, pollStatus, fetchResult,
+  fetchConversations, createConversation, fetchConversationMessages,
+  updateConversationTitle, touchConversation, deleteConversation,
+} from '../api';
+import type { ChatAttachmentPayload } from '../api';
 import { formatDT, buildItineraryContext, fetchPixabayImage } from '../utils';
 import { ActivityImage } from './ActivityImage';
 
@@ -30,6 +35,8 @@ export function ItineraryView({
   const [replanTaskId, setReplanTaskId] = useState<string | null>(null);
   const [scheduleKey, setScheduleKey] = useState(0);
   const [chatOpen, setChatOpen] = useState(false);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { setActiveDay(1); }, [itinerary]);
@@ -50,23 +57,59 @@ export function ItineraryView({
     });
   }, [itinerary]);
 
-  const handleRefine = useCallback(async () => {
-    const text = inputValue.trim();
+  const handleRefine = useCallback(async (
+    overrideText?: string,
+    attachments?: ChatAttachmentPayload[],
+    displayAttachments?: ChatMsg['attachments'],
+    displayTextOverride?: string,
+  ) => {
+    const text = (overrideText ?? inputValue).trim();
     if (!text || chatLoading) return;
     setChatLoading(true);
     setChatError(null);
-    setChatHistory(h => [...h, { role: 'user', text }]);
+    const isFirstMsg = chatHistory.length === 0;
+    setChatHistory(h => [...h, { role: 'user', text: displayTextOverride ?? text, attachments: displayAttachments }]);
     setInputValue('');
+    let convId = activeConvId;
+    if (!convId) {
+      try {
+        const conv = await createConversation();
+        setConversations(prev => [conv, ...prev]);
+        setActiveConvId(conv.conversation_id);
+        convId = conv.conversation_id;
+      } catch {
+        convId = sessionId;
+      }
+    }
+    const usedSessionId = convId;
+    if (convId && convId !== sessionId) {
+      if (isFirstMsg) {
+        const title = text.slice(0, 28) + (text.length > 28 ? '...' : '');
+        updateConversationTitle(convId, title)
+          .then(u => setConversations(prev => prev.map(c => c.conversation_id === convId ? { ...c, title: u.title } : c)))
+          .catch(() => {});
+      }
+      touchConversation(convId).catch(() => {});
+    }
     try {
       const ctx = itinerary ? buildItineraryContext(itinerary) : undefined;
-      const res = await postChat(text, sessionId, itinerary?.task_id, ctx);
-      if (res.response_type === 'quick' && res.quick_reply) {
-        setChatHistory(h => [...h, { role: 'assistant', text: res.quick_reply! }]);
+      // Ensure backend runs quick/pipeline classification even when itinerary task_id is absent.
+      const taskIdForChat = itinerary?.task_id ?? activeConvId ?? sessionId;
+      const res = await postChat(text, usedSessionId, taskIdForChat, ctx, attachments);
+      if (res.response_type === 'quick') {
+        const quickText = (res.quick_reply ?? res.message ?? '').trim();
+        if (quickText) {
+          setChatHistory(h => [...h, { role: 'assistant', text: quickText }]);
+        }
         setChatLoading(false);
-      } else if (res.task_id) {
+      } else if (res.response_type === 'pipeline' && res.task_id) {
         setChatHistory(h => [...h, { role: 'assistant', text: '正在为您重新规划方案，请稍候...', type: 'replanning' }]);
         setReplanTaskId(res.task_id);
       } else {
+        const fallbackText = (res.message ?? '').trim();
+        if (fallbackText) {
+          setChatHistory(h => [...h, { role: 'assistant', text: fallbackText }]);
+        }
         setChatLoading(false);
       }
     } catch (err: unknown) {
@@ -74,7 +117,7 @@ export function ItineraryView({
       setChatError(err instanceof Error ? err.message : String(err));
       setChatLoading(false);
     }
-  }, [inputValue, chatLoading, itinerary, sessionId]);
+  }, [inputValue, chatLoading, chatHistory.length, itinerary, sessionId, activeConvId]);
 
   // Inline polling for replan task
   useEffect(() => {
@@ -143,15 +186,72 @@ export function ItineraryView({
 
   const handleNewChat = useCallback(async () => {
     try {
-      await fetch(`${API_BASE}/sessions/${sessionId}/clear`, { method: 'POST' });
+      const conv = await createConversation();
+      setConversations(prev => [conv, ...prev]);
+      setActiveConvId(conv.conversation_id);
     } catch {
-      // best-effort; clear frontend regardless
+      // ignore
     }
     setChatHistory([]);
     setInputValue('');
     setChatError(null);
     setReplanTaskId(null);
-  }, [sessionId]);
+  }, []);
+
+  const handleSelectConversation = useCallback(async (convId: string) => {
+    if (convId === activeConvId) return;
+    setActiveConvId(convId);
+    setChatHistory([]);
+    setChatError(null);
+    setReplanTaskId(null);
+    try {
+      const msgs = await fetchConversationMessages(convId);
+      setChatHistory(msgs.map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        text: m.content,
+        attachments: m.attachments?.map((a) => ({
+          name: a.name,
+          kind: (a.kind ?? (a.mime_type?.startsWith('image/') ? 'image' : 'file')) as 'image' | 'file',
+          data_url: a.data_base64 ? `data:${a.mime_type || 'application/octet-stream'};base64,${a.data_base64}` : undefined,
+        })),
+      })));
+    } catch {
+      // ignore
+    }
+  }, [activeConvId]);
+
+  const handleDeleteConversation = useCallback(async (convId: string) => {
+    try {
+      await deleteConversation(convId);
+      setConversations(prev => prev.filter(c => c.conversation_id !== convId));
+      if (activeConvId === convId) {
+        setActiveConvId(null);
+        setChatHistory([]);
+        setChatError(null);
+        setReplanTaskId(null);
+      }
+    } catch {
+      // ignore
+    }
+  }, [activeConvId]);
+
+  const handleRenameConversation = useCallback(async (convId: string, title: string) => {
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+    try {
+      const updated = await updateConversationTitle(convId, nextTitle);
+      setConversations(prev => prev.map(c =>
+        c.conversation_id === convId ? { ...c, title: updated.title, updated_at: updated.updated_at } : c
+      ));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!chatOpen) return;
+    fetchConversations().then(setConversations).catch(() => {});
+  }, [chatOpen]);
 
   return (
     <motion.div
@@ -230,6 +330,11 @@ export function ItineraryView({
           onNewChat={handleNewChat}
           onConfirmReplan={handleConfirmReplan}
           chatEndRef={chatEndRef}
+          conversations={conversations}
+          activeConvId={activeConvId}
+          onSelectConversation={handleSelectConversation}
+          onRenameConversation={handleRenameConversation}
+          onDeleteConversation={handleDeleteConversation}
         />
       </main>
     </motion.div>
@@ -579,6 +684,7 @@ function HighlightsSection({ highlights }: { highlights: string[] | undefined })
 function ChatPanel({
   chatOpen, setChatOpen, chatHistory, chatLoading, chatError,
   inputValue, setInputValue, onRefine, onNewChat, onConfirmReplan, chatEndRef,
+  conversations, activeConvId, onSelectConversation, onRenameConversation, onDeleteConversation,
 }: {
   chatOpen: boolean;
   setChatOpen: (v: boolean | ((prev: boolean) => boolean)) => void;
@@ -587,11 +693,218 @@ function ChatPanel({
   chatError: string | null;
   inputValue: string;
   setInputValue: (v: string) => void;
-  onRefine: () => void;
+  onRefine: (
+    overrideText?: string,
+    attachments?: ChatAttachmentPayload[],
+    displayAttachments?: ChatMsg['attachments'],
+    displayTextOverride?: string,
+  ) => void;
   onNewChat: () => void;
   onConfirmReplan: (idx: number, action: 'accepted' | 'dismissed') => void;
   chatEndRef: React.RefObject<HTMLDivElement | null>;
+  conversations: Conversation[];
+  activeConvId: string | null;
+  onSelectConversation: (id: string) => void;
+  onRenameConversation: (id: string, title: string) => void;
+  onDeleteConversation: (id: string) => void;
 }) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const [previewImage, setPreviewImage] = useState<{ src: string; name: string } | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(true);
+  const [attachments, setAttachments] = useState<Array<{
+    id: string;
+    name: string;
+    kind: 'image' | 'file';
+    status: 'uploading' | 'ready';
+    mimeType?: string;
+    dataBase64?: string;
+    sizeBytes?: number;
+  }>>([]);
+  const recognitionRef = useRef<any>(null);
+  const speechBaseInputRef = useRef('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterdayStart = new Date(todayStart.getTime() - 86400000);
+  const groups: { label: string; items: Conversation[] }[] = [];
+  const today = conversations.filter(c => new Date(c.updated_at) >= todayStart);
+  const yesterday = conversations.filter(c => { const d = new Date(c.updated_at); return d >= yesterdayStart && d < todayStart; });
+  const older = conversations.filter(c => new Date(c.updated_at) < yesterdayStart);
+  if (today.length) groups.push({ label: 'Today', items: today });
+  if (yesterday.length) groups.push({ label: 'Yesterday', items: yesterday });
+  if (older.length) groups.push({ label: 'Earlier', items: older });
+
+  const activeTitle = conversations.find(c => c.conversation_id === activeConvId)?.title ?? 'New AI chat';
+  const activeTitleDisplay = activeTitle.length > 16 ? `${activeTitle.slice(0, 16)}...` : activeTitle;
+  const canManageActiveConv = Boolean(activeConvId);
+
+  const handleOpenRenameDialog = useCallback(() => {
+    if (!activeConvId) return;
+    setRenameValue(activeTitle);
+    setHeaderMenuOpen(false);
+    setRenameDialogOpen(true);
+  }, [activeConvId, activeTitle]);
+
+  const handleSubmitRename = useCallback(() => {
+    if (!activeConvId) return;
+    const nextTitle = renameValue.trim();
+    if (!nextTitle) return;
+    onRenameConversation(activeConvId, nextTitle);
+    setRenameDialogOpen(false);
+  }, [activeConvId, renameValue, onRenameConversation]);
+
+  const handleDeleteFromHeaderMenu = useCallback(() => {
+    if (!activeConvId) return;
+    onDeleteConversation(activeConvId);
+    setHeaderMenuOpen(false);
+  }, [activeConvId, onDeleteConversation]);
+
+  const addAttachments = useCallback((files: File[]) => {
+    if (!files.length) return;
+    const readAsDataURL = (file: File) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ''));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    const created = files.map((file) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: file.name || (file.type.startsWith('image/') ? 'image.png' : 'file'),
+      kind: file.type.startsWith('image/') ? 'image' as const : 'file' as const,
+      status: 'uploading' as const,
+      mimeType: file.type || 'application/octet-stream',
+      sizeBytes: file.size,
+    }));
+    setAttachments(prev => [...created, ...prev]);
+    created.forEach(async (item, idx) => {
+      try {
+        const dataUrl = await readAsDataURL(files[idx]);
+        const minimumDelay = 450 + idx * 120;
+        setTimeout(() => {
+          setAttachments(prev => prev.map(a => (
+            a.id === item.id
+              ? { ...a, status: 'ready', dataBase64: dataUrl.split(',')[1] ?? '' }
+              : a
+          )));
+        }, minimumDelay);
+      } catch {
+        setAttachments(prev => prev.filter(a => a.id !== item.id));
+      }
+    });
+  }, []);
+
+  const handlePasteAttachments = useCallback((e: React.ClipboardEvent<HTMLInputElement>) => {
+    if (!e.clipboardData?.items) return;
+    const files: File[] = [];
+    for (const item of Array.from(e.clipboardData.items)) {
+      if (item.kind === 'file') {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (!files.length) return;
+    e.preventDefault();
+    addAttachments(files);
+  }, [addAttachments]);
+
+  const handlePickFiles = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    addAttachments(files);
+    e.currentTarget.value = '';
+  }, [addAttachments]);
+
+  const handleRemoveAttachment = useCallback((id: string) => {
+    setAttachments(prev => prev.filter(a => a.id !== id));
+  }, []);
+
+  const handleSubmitChat = useCallback(() => {
+    const trimmed = inputValue.trim();
+    if (!trimmed && attachments.length === 0) return;
+    if (attachments.some(a => a.status === 'uploading')) return;
+    const readyAttachments = attachments
+      .filter(a => a.status === 'ready' && a.dataBase64)
+      .slice(0, 6);
+    const payloads: ChatAttachmentPayload[] = readyAttachments
+      .map(a => ({
+        name: a.name,
+        mime_type: a.mimeType || (a.kind === 'image' ? 'image/png' : 'application/octet-stream'),
+        data_base64: a.dataBase64 || '',
+        size_bytes: a.sizeBytes,
+      }));
+    const displayAttachments: ChatMsg['attachments'] = readyAttachments
+      .map(a => ({
+        name: a.name,
+        kind: a.kind,
+        data_url: a.dataBase64 ? `data:${a.mimeType || (a.kind === 'image' ? 'image/png' : 'application/octet-stream')};base64,${a.dataBase64}` : undefined,
+      }));
+    const composed = trimmed || (payloads.length ? '请根据我上传的附件回答。' : '');
+    onRefine(composed, payloads, displayAttachments, trimmed);
+    setInputValue('');
+    setAttachments([]);
+  }, [inputValue, attachments, onRefine, setInputValue]);
+
+  useEffect(() => {
+    setAttachments([]);
+  }, [activeConvId]);
+
+  useEffect(() => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      setSpeechSupported(false);
+      return;
+    }
+    setSpeechSupported(true);
+    const recognition = new SR();
+    recognition.lang = 'zh-CN';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event: any) => {
+      let transcript = '';
+      for (let i = 0; i < event.results.length; i += 1) {
+        transcript += event.results[i][0]?.transcript ?? '';
+      }
+      const next = transcript.trim();
+      const base = speechBaseInputRef.current;
+      setInputValue(base && next ? `${base} ${next}` : (base || next));
+    };
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
+    recognitionRef.current = recognition;
+    return () => {
+      try {
+        recognition.stop();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
+    };
+  }, [setInputValue]);
+
+  const handleToggleSpeechInput = useCallback(() => {
+    if (!speechSupported || !recognitionRef.current) return;
+    if (isListening) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      setIsListening(false);
+      return;
+    }
+    speechBaseInputRef.current = inputValue.trim();
+    try {
+      recognitionRef.current.start();
+      setIsListening(true);
+    } catch {
+      setIsListening(false);
+    }
+  }, [speechSupported, isListening, inputValue]);
   return (
     <div className="fixed bottom-6 right-[324px] z-40">
       <AnimatePresence>
@@ -605,7 +918,7 @@ function ChatPanel({
             style={{ maxHeight: 'calc(100vh - 160px)' }}
           >
             {/* ── Header ── */}
-            <div className="flex items-center justify-between px-3 py-2 border-b border-outline-variant/10 flex-shrink-0">
+            <div className="flex items-center px-3 py-2 border-b border-outline-variant/10 flex-shrink-0 gap-2">
               {/* Mascot */}
               <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center shadow-md shadow-primary/30 flex-shrink-0">
                 <svg width="20" height="20" viewBox="0 0 32 32" fill="none">
@@ -625,8 +938,64 @@ function ChatPanel({
                   </g>
                 </svg>
               </div>
+              {/* Session selector dropdown */}
+              <div className="relative flex-1">
+                <button
+                  onClick={() => setDropdownOpen(o => !o)}
+                  className="inline-flex items-center gap-1 text-sm font-medium text-on-surface/75 hover:text-on-surface px-2 py-1 rounded-lg hover:bg-surface-container-low transition-colors max-w-[190px]"
+                >
+                  <span className="truncate text-left">{activeTitleDisplay}</span>
+                  <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 transition-transform duration-150 ${dropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {dropdownOpen && <div className="fixed inset-0 z-40" onClick={() => setDropdownOpen(false)} />}
+                <AnimatePresence>
+                  {dropdownOpen && (
+                    <motion.div
+                      key="conv-dropdown"
+                      initial={{ opacity: 0, y: -4, scale: 0.97 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                      transition={{ duration: 0.12 }}
+                      className="absolute top-full left-0 mt-1 w-[220px] bg-white rounded-xl shadow-[0_8px_32px_rgba(87,94,112,0.16)] border border-outline-variant/15 z-50 overflow-hidden py-1.5"
+                    >
+                      {groups.length === 0 ? (
+                        <p className="text-outline/50 text-xs px-3 py-2">暂无历史对话</p>
+                      ) : groups.map(g => (
+                        <div key={g.label}>
+                          <p className="text-outline/60 text-[10px] font-semibold uppercase tracking-wider px-3 pt-2 pb-1">{g.label}</p>
+                          {g.items.map(c => (
+                            <div
+                              key={c.conversation_id}
+                              className={`group flex items-center text-[13px] transition-colors ${
+                                activeConvId === c.conversation_id
+                                  ? 'text-on-surface bg-surface-container-high'
+                                  : 'text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface'
+                              }`}
+                            >
+                              <button
+                                onClick={() => { onSelectConversation(c.conversation_id); setDropdownOpen(false); }}
+                                className="flex-1 text-left px-3 py-2 flex items-center gap-2 min-w-0"
+                              >
+                                <span className="truncate">{c.title}</span>
+                                {activeConvId === c.conversation_id && <Check className="w-3 h-3 flex-shrink-0 text-primary" />}
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); onDeleteConversation(c.conversation_id); }}
+                                className="opacity-0 group-hover:opacity-100 pr-2 text-outline/40 hover:text-red-400 transition-all"
+                                title="删除"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
               {/* Action buttons */}
-              <div className="flex items-center gap-0.5">
+              <div className="flex items-center gap-0.5 flex-shrink-0">
                 <button className="w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant/40 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>
@@ -646,11 +1015,47 @@ function ChatPanel({
                     <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>
                   </svg>
                 </button>
-                <button className="w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant/40 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors">
+                <button
+                  onClick={() => setHeaderMenuOpen(o => !o)}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant/40 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors"
+                >
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                     <circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/>
                   </svg>
                 </button>
+                {headerMenuOpen && <div className="fixed inset-0 z-40" onClick={() => setHeaderMenuOpen(false)} />}
+                <AnimatePresence>
+                  {headerMenuOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -4, scale: 0.97 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                      transition={{ duration: 0.12 }}
+                      className="absolute top-[44px] right-10 z-50 w-44 rounded-xl border border-outline-variant/20 bg-white shadow-[0_10px_30px_rgba(0,0,0,0.12)] py-1.5"
+                    >
+                      <button
+                        onClick={handleOpenRenameDialog}
+                        disabled={!canManageActiveConv}
+                        className="w-full px-3 py-2 text-left text-sm text-on-surface hover:bg-surface-container-low disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+                        </svg>
+                        <span>Rename</span>
+                      </button>
+                      <button
+                        onClick={handleDeleteFromHeaderMenu}
+                        disabled={!canManageActiveConv}
+                        className="w-full px-3 py-2 text-left text-sm text-red-500 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                        </svg>
+                        <span>Delete</span>
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
                 <button
                   onClick={() => setChatOpen(false)}
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant/40 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors"
@@ -701,8 +1106,65 @@ function ChatPanel({
                     className={msg.role === 'user' ? 'flex justify-end' : ''}
                   >
                     {msg.role === 'user' ? (
-                      <div className="inline-block px-4 py-2 bg-surface-container-high text-on-surface text-sm rounded-2xl rounded-br-md max-w-[85%]">
-                        {msg.text}
+                      <div className="max-w-[85%] flex flex-col items-end gap-2">
+                        {msg.attachments && msg.attachments.length > 0 && (() => {
+                          const imageAttachments = msg.attachments.filter(a => a.kind === 'image' && a.data_url);
+                          const fileAttachments = msg.attachments.filter(a => !(a.kind === 'image' && a.data_url));
+                          const visibleImages = imageAttachments.slice(0, 3);
+                          const hiddenImageCount = imageAttachments.length - visibleImages.length;
+                          const singleImageMode = imageAttachments.length === 1;
+
+                          return (
+                            <div className="space-y-2">
+                              {imageAttachments.length > 0 && (
+                                <div className={singleImageMode ? 'inline-block' : 'flex flex-wrap justify-end gap-2 max-w-[75vw]'}>
+                                  {visibleImages.map((att, idx) => (
+                                    <div
+                                      key={`${att.name}-${idx}`}
+                                      className={`relative overflow-hidden ${
+                                        singleImageMode
+                                          ? 'w-[240px] max-w-[62vw] aspect-[4/3] rounded-2xl border border-outline-variant/15 shadow-[0_6px_18px_rgba(0,0,0,0.08)] bg-white'
+                                          : 'w-[108px] h-[108px] rounded-2xl border border-outline-variant/15 bg-white'
+                                      }`}
+                                    >
+                                      <button
+                                        onClick={() => setPreviewImage({ src: att.data_url || '', name: att.name })}
+                                        className="w-full h-full block"
+                                        title="点击放大预览"
+                                      >
+                                        <img
+                                          src={att.data_url}
+                                          alt={att.name}
+                                          className="w-full h-full object-cover"
+                                        />
+                                      </button>
+                                      {idx === 2 && hiddenImageCount > 0 && (
+                                        <div className="absolute inset-0 bg-black/45 text-white text-sm font-semibold flex items-center justify-center">
+                                          +{hiddenImageCount}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {fileAttachments.length > 0 && (
+                                <div className="flex flex-wrap justify-end gap-1.5 max-w-[75vw]">
+                                  {fileAttachments.map((att, idx) => (
+                                    <div key={`${att.name}-${idx}`} className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] border border-outline-variant/25 bg-white/75 text-on-surface">
+                                      <span className="w-2 h-2 rounded-full bg-primary/70 flex-shrink-0" />
+                                      <span className="truncate max-w-[160px]">{att.name}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                        {msg.text && (
+                          <div className="inline-block px-4 py-2 bg-surface-container-high text-on-surface text-sm rounded-2xl rounded-br-md">
+                            <p>{msg.text}</p>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="w-full">
@@ -784,12 +1246,41 @@ function ChatPanel({
             {/* ── Input Area ── */}
             <div className="p-3 flex-shrink-0">
               <div className="rounded-xl border border-outline-variant/20 focus-within:border-primary/50 focus-within:shadow-[0_0_0_2px_rgba(103,80,164,0.1)] transition-all">
+                {attachments.length > 0 && (
+                  <div className="px-3.5 pt-3 pb-0.5 flex flex-wrap gap-1.5">
+                    {attachments.map((a) => (
+                      <div
+                        key={a.id}
+                        className={`max-w-[190px] inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] border ${
+                          a.status === 'uploading'
+                            ? 'bg-surface-container-low text-on-surface-variant border-outline-variant/25'
+                            : 'bg-surface-container-high text-on-surface border-outline-variant/30'
+                        }`}
+                      >
+                        {a.status === 'uploading' ? (
+                          <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+                        ) : (
+                          <span className="w-2 h-2 rounded-full bg-primary/70 flex-shrink-0" />
+                        )}
+                        <span className="truncate">{a.name}</span>
+                        <button
+                          onClick={() => handleRemoveAttachment(a.id)}
+                          className="text-on-surface-variant/60 hover:text-on-surface transition-colors"
+                          title="移除附件"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="px-3.5 pt-3 pb-1">
                   <input
                     type="text"
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && !chatLoading && onRefine()}
+                    onPaste={handlePasteAttachments}
+                    onKeyDown={(e) => e.key === 'Enter' && !chatLoading && handleSubmitChat()}
                     placeholder="Do anything with AI..."
                     className="w-full bg-transparent border-none focus:ring-0 text-sm text-on-surface placeholder-outline/40 outline-none"
                     disabled={chatLoading}
@@ -798,7 +1289,19 @@ function ChatPanel({
                 </div>
                 <div className="flex items-center justify-between px-2.5 pb-2.5 pt-1">
                   <div className="flex items-center gap-0.5">
-                    <button className="w-7 h-7 rounded-md flex items-center justify-center text-on-surface-variant/40 hover:bg-surface-container-low hover:text-on-surface-variant transition-colors">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept="image/*,*/*"
+                      className="hidden"
+                      onChange={handlePickFiles}
+                    />
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-7 h-7 rounded-md flex items-center justify-center text-on-surface-variant/40 hover:bg-surface-container-low hover:text-on-surface-variant transition-colors"
+                      title="添加图片或文件"
+                    >
                       <Plus className="w-4 h-4" />
                     </button>
                     <button className="w-7 h-7 rounded-md flex items-center justify-center text-on-surface-variant/40 hover:bg-surface-container-low hover:text-on-surface-variant transition-colors">
@@ -807,14 +1310,27 @@ function ChatPanel({
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs text-on-surface-variant/35 px-1.5 select-none">Auto</span>
-                    <button className="w-7 h-7 rounded-md flex items-center justify-center text-on-surface-variant/40 hover:bg-surface-container-low hover:text-on-surface-variant transition-colors">
-                      <Mic className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={onRefine}
-                      disabled={chatLoading || !inputValue.trim()}
-                      className="w-7 h-7 rounded-full flex items-center justify-center bg-primary/10 text-primary hover:bg-primary hover:text-on-primary disabled:opacity-25 disabled:hover:bg-primary/10 disabled:hover:text-primary transition-all"
-                    >
+                <button
+                  onClick={handleToggleSpeechInput}
+                  disabled={!speechSupported}
+                  title={
+                    !speechSupported
+                      ? '当前浏览器不支持语音输入'
+                      : (isListening ? '停止语音输入' : '开始语音输入')
+                  }
+                  className={`w-7 h-7 rounded-md flex items-center justify-center transition-colors ${
+                    isListening
+                      ? 'text-red-500 bg-red-50'
+                      : 'text-on-surface-variant/40 hover:bg-surface-container-low hover:text-on-surface-variant'
+                  } disabled:opacity-30 disabled:hover:bg-transparent`}
+                >
+                  <Mic className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={handleSubmitChat}
+                  disabled={chatLoading || attachments.some(a => a.status === 'uploading') || (!inputValue.trim() && attachments.length === 0)}
+                  className="w-7 h-7 rounded-full flex items-center justify-center bg-primary/10 text-primary hover:bg-primary hover:text-on-primary disabled:opacity-25 disabled:hover:bg-primary/10 disabled:hover:text-primary transition-all"
+                >
                       {chatLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUp className="w-3.5 h-3.5" />}
                     </button>
                   </div>
@@ -893,6 +1409,90 @@ function ChatPanel({
           </AnimatePresence>
         </motion.button>
       </div>
+
+      <AnimatePresence>
+        {previewImage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] bg-black/65 flex items-center justify-center p-6"
+            onClick={() => setPreviewImage(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ duration: 0.15 }}
+              className="relative max-w-[88vw] max-h-[84vh]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <img
+                src={previewImage.src}
+                alt={previewImage.name}
+                className="max-w-[88vw] max-h-[84vh] object-contain rounded-2xl shadow-[0_20px_80px_rgba(0,0,0,0.45)] bg-white"
+              />
+              <button
+                onClick={() => setPreviewImage(null)}
+                className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/55 text-white flex items-center justify-center hover:bg-black/70 transition-colors"
+                title="关闭预览"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {renameDialogOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30"
+            onClick={() => setRenameDialogOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 6 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 6 }}
+              transition={{ duration: 0.15 }}
+              className="w-[360px] rounded-2xl bg-white border border-outline-variant/20 shadow-[0_18px_60px_rgba(0,0,0,0.2)] p-5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-base font-semibold text-on-surface">Rename chat</h3>
+              <p className="mt-1 text-xs text-on-surface-variant">为当前对话设置新标题</p>
+              <input
+                autoFocus
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSubmitRename();
+                  if (e.key === 'Escape') setRenameDialogOpen(false);
+                }}
+                placeholder="输入新的标题"
+                className="mt-4 w-full h-10 rounded-lg border border-outline-variant/25 px-3 text-sm text-on-surface outline-none focus:border-primary/60"
+              />
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setRenameDialogOpen(false)}
+                  className="px-3.5 h-9 rounded-lg text-sm text-on-surface-variant hover:bg-surface-container-low transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSubmitRename}
+                  disabled={!renameValue.trim()}
+                  className="px-3.5 h-9 rounded-lg text-sm bg-primary text-on-primary disabled:opacity-40 transition-opacity"
+                >
+                  Save
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
