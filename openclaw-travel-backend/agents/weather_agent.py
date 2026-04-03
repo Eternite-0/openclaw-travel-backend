@@ -56,7 +56,7 @@ class WeatherAgent(BaseSpecialistAgent):
         schema_json = json.dumps(
             self.output_schema.model_json_schema(),
             ensure_ascii=False,
-            indent=2,
+            separators=(",", ":"),
         )
         weather_data = context.get("weather_data", "[]")
         if not isinstance(weather_data, str):

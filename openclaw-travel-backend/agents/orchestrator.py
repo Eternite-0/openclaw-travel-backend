@@ -4,18 +4,17 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from sqlmodel import Session
 
 from agents.attraction_agent import AttractionAgent
-from agents.budget_agent import BudgetAgent
-from agents.currency_agent import CurrencyAgent
 from agents.flight_agent import FlightAgent
 from agents.hotel_agent import HotelAgent
 from agents.intent_parser import IntentParserAgent
 from agents.itinerary_agent import ItineraryAgent
 from agents.weather_agent import WeatherAgent
+from config import get_settings
 from core.memory import MemoryManager
 from core.schemas import (
     AttractionResult,
@@ -32,6 +31,9 @@ from core.schemas import (
 from core.status_store import StatusStore
 from database import ItineraryRecord, get_session_last_result
 from services import crawleo_service, currency_service, serpapi_service, tavily_service, weather_service
+from services import search_cache
+from services.budget_builder import build_budget
+from services.currency_builder import build_currency_info
 
 logger = logging.getLogger(__name__)
 
@@ -139,21 +141,19 @@ async def run_travel_pipeline(
 
     # ── Phase 2: Conditional External Pre-fetch + Parallel Agents ────────
     logger.info("[task:%s] Phase 2 — Pre-fetching external data", task_id)
+    settings = get_settings()
 
     to_currency = _currency_for_country(intent.dest_country_code)
     coords = weather_service.get_city_coordinates(intent.dest_city)
     dep_date_str = intent.departure_date.isoformat()
     ret_date_str = intent.return_date.isoformat()
-    flight_budget = intent.budget_cny * 0.35
-    hotel_budget = intent.budget_cny * 0.25
 
     need_flight  = "flight_agent"   not in skip_set
     need_hotel   = "hotel_agent"    not in skip_set
     need_weather = "weather_agent"  not in skip_set
     need_currency = "currency_agent" not in skip_set
 
-    # Surface parallel scheduling intent to UI early, so frontend can show
-    # multiple agents as running during pre-fetch and avoid "sudden done only".
+    # Surface parallel scheduling intent to UI early
     for agent_name in ("currency_agent", "budget_agent", "flight_agent", "hotel_agent", "attraction_agent", "weather_agent"):
         if agent_name not in skip_set:
             await status_store.update_agent(
@@ -163,122 +163,216 @@ async def run_travel_pipeline(
                 message="等待外部数据与任务调度...",
             )
 
-    async def _noop_dict():  return {}
-    async def _noop_str():   return ""
-    async def _noop_float(): return 1.0
+    # ── 2a: Deterministic currency + budget (instant, no LLM) ─────────
+    rate = 1.0
+    if need_currency:
+        rate = await currency_service.get_rate("CNY", to_currency)
+    currency = build_currency_info(intent, rate, to_currency)
+    await status_store.update_agent(task_id, "currency_agent", "done",
+                                    message="完成",
+                                    result_summary=f"1 CNY ≈ {rate:.4f} {to_currency}")
 
+    budget = build_budget(intent)
+    await status_store.update_agent(task_id, "budget_agent", "done",
+                                    message="完成",
+                                    result_summary=f"总预算 ¥{budget.total_cny:.0f}，日均 ¥{budget.daily_budget_cny:.0f}")
+
+    flight_budget = budget.flight_cny
+    hotel_budget = budget.accommodation_cny
+
+    # ── 2b: Smart external data pre-fetch (search fallback strategy) ──
+    search_strategy = settings.search_strategy
+
+    async def _fetch_flight_data() -> tuple[str, str, str]:
+        """Fetch flight data with fallback: SerpAPI → Tavily → Crawleo."""
+        cache_kw = dict(origin=intent.origin_city, dest=intent.dest_city,
+                        dep=dep_date_str, ret=ret_date_str)
+        cached_result = await search_cache.get("flights", **cache_kw)
+        if cached_result is not None:
+            logger.info("[task:%s] Flight search cache HIT", task_id)
+            return cached_result.get("serpapi", ""), cached_result.get("tavily", ""), cached_result.get("crawleo", "")
+
+        serpapi_summary, tavily_str, crawleo_str = "", "", ""
+
+        if search_strategy == "all":
+            # Legacy mode: call all three sources in parallel
+            raw, tav, craw = await asyncio.gather(
+                serpapi_service.search_flights(
+                    origin_city=intent.origin_city, dest_city=intent.dest_city,
+                    outbound_date=intent.departure_date, return_date=intent.return_date,
+                    travelers=intent.travelers),
+                tavily_service.search_flights(
+                    origin_city=intent.origin_city, dest_city=intent.dest_city,
+                    departure_date=dep_date_str, return_date=ret_date_str),
+                crawleo_service.search_flights(
+                    origin_city=intent.origin_city, dest_city=intent.dest_city,
+                    departure_date=dep_date_str, return_date=ret_date_str),
+            )
+            serpapi_summary = serpapi_service.extract_flight_summary(raw)
+            tavily_str, crawleo_str = tav, craw
+        else:
+            # Smart fallback: try primary source, fallback on failure
+            primary_is_serpapi = search_strategy == "serpapi_first"
+            if primary_is_serpapi and settings.serpapi_enabled and settings.serpapi_key:
+                raw = await serpapi_service.search_flights(
+                    origin_city=intent.origin_city, dest_city=intent.dest_city,
+                    outbound_date=intent.departure_date, return_date=intent.return_date,
+                    travelers=intent.travelers)
+                serpapi_summary = serpapi_service.extract_flight_summary(raw)
+                if not raw:
+                    logger.info("[task:%s] SerpAPI flights empty, falling back to Tavily", task_id)
+                    tavily_str = await tavily_service.search_flights(
+                        origin_city=intent.origin_city, dest_city=intent.dest_city,
+                        departure_date=dep_date_str, return_date=ret_date_str)
+            else:
+                tavily_str = await tavily_service.search_flights(
+                    origin_city=intent.origin_city, dest_city=intent.dest_city,
+                    departure_date=dep_date_str, return_date=ret_date_str)
+                if not tavily_str or "未获取" in tavily_str:
+                    crawleo_str = await crawleo_service.search_flights(
+                        origin_city=intent.origin_city, dest_city=intent.dest_city,
+                        departure_date=dep_date_str, return_date=ret_date_str)
+
+        await search_cache.put("flights", {"serpapi": serpapi_summary, "tavily": tavily_str, "crawleo": crawleo_str}, **cache_kw)
+        return serpapi_summary, tavily_str, crawleo_str
+
+    async def _fetch_hotel_data() -> tuple[str, str, str]:
+        """Fetch hotel data with fallback: SerpAPI → Tavily → Crawleo."""
+        cache_kw = dict(city=intent.dest_city, checkin=dep_date_str, checkout=ret_date_str)
+        cached_result = await search_cache.get("hotels", **cache_kw)
+        if cached_result is not None:
+            logger.info("[task:%s] Hotel search cache HIT", task_id)
+            return cached_result.get("serpapi", ""), cached_result.get("tavily", ""), cached_result.get("crawleo", "")
+
+        serpapi_summary, tavily_str, crawleo_str = "", "", ""
+
+        if search_strategy == "all":
+            raw, tav, craw = await asyncio.gather(
+                serpapi_service.search_hotels(
+                    city=intent.dest_city, check_in=intent.departure_date,
+                    check_out=intent.return_date, adults=intent.travelers),
+                tavily_service.search_hotels(
+                    city=intent.dest_city, budget_cny=intent.budget_cny,
+                    duration_days=intent.duration_days),
+                crawleo_service.search_hotels(
+                    city=intent.dest_city, check_in=dep_date_str, check_out=ret_date_str),
+            )
+            serpapi_summary = serpapi_service.extract_hotel_summary(raw)
+            tavily_str, crawleo_str = tav, craw
+        else:
+            primary_is_serpapi = search_strategy == "serpapi_first"
+            if primary_is_serpapi and settings.serpapi_enabled and settings.serpapi_key:
+                raw = await serpapi_service.search_hotels(
+                    city=intent.dest_city, check_in=intent.departure_date,
+                    check_out=intent.return_date, adults=intent.travelers)
+                serpapi_summary = serpapi_service.extract_hotel_summary(raw)
+                if not raw:
+                    logger.info("[task:%s] SerpAPI hotels empty, falling back to Tavily", task_id)
+                    tavily_str = await tavily_service.search_hotels(
+                        city=intent.dest_city, budget_cny=intent.budget_cny,
+                        duration_days=intent.duration_days)
+            else:
+                tavily_str = await tavily_service.search_hotels(
+                    city=intent.dest_city, budget_cny=intent.budget_cny,
+                    duration_days=intent.duration_days)
+                if not tavily_str or "未获取" in tavily_str:
+                    crawleo_str = await crawleo_service.search_hotels(
+                        city=intent.dest_city, check_in=dep_date_str, check_out=ret_date_str)
+
+        await search_cache.put("hotels", {"serpapi": serpapi_summary, "tavily": tavily_str, "crawleo": crawleo_str}, **cache_kw)
+        return serpapi_summary, tavily_str, crawleo_str
+
+    async def _noop_tuple():  return ("", "", "")
+    async def _noop_list():   return []
+
+    # Pre-fetch external data in parallel (weather + flights + hotels)
     (
-        rate,
         forecast_raw,
-        serpapi_flights_raw,
-        serpapi_hotels_raw,
-        tavily_flights_str,
-        tavily_hotels_str,
-        crawleo_flights_str,
-        crawleo_hotels_str,
+        flight_data,
+        hotel_data,
     ) = await asyncio.gather(
-        currency_service.get_rate("CNY", to_currency) if need_currency else _noop_float(),
         weather_service.get_forecast(
             lat=coords["lat"], lon=coords["lon"],
             days=intent.duration_days, start_date=intent.departure_date,
-        ) if need_weather else _noop_dict(),
-        serpapi_service.search_flights(
-            origin_city=intent.origin_city, dest_city=intent.dest_city,
-            outbound_date=intent.departure_date, return_date=intent.return_date,
-            travelers=intent.travelers,
-        ) if need_flight else _noop_dict(),
-        serpapi_service.search_hotels(
-            city=intent.dest_city, check_in=intent.departure_date,
-            check_out=intent.return_date, adults=intent.travelers,
-        ) if need_hotel else _noop_dict(),
-        tavily_service.search_flights(
-            origin_city=intent.origin_city, dest_city=intent.dest_city,
-            departure_date=dep_date_str, return_date=ret_date_str,
-        ) if need_flight else _noop_str(),
-        tavily_service.search_hotels(
-            city=intent.dest_city, budget_cny=intent.budget_cny,
-            duration_days=intent.duration_days,
-        ) if need_hotel else _noop_str(),
-        crawleo_service.search_flights(
-            origin_city=intent.origin_city, dest_city=intent.dest_city,
-            departure_date=dep_date_str, return_date=ret_date_str,
-        ) if need_flight else _noop_str(),
-        crawleo_service.search_hotels(
-            city=intent.dest_city, check_in=dep_date_str, check_out=ret_date_str,
-        ) if need_hotel else _noop_str(),
+        ) if need_weather else _noop_list(),
+        _fetch_flight_data() if need_flight else _noop_tuple(),
+        _fetch_hotel_data() if need_hotel else _noop_tuple(),
     )
+    serpapi_flight_summary, tavily_flights_str, crawleo_flights_str = flight_data
+    serpapi_hotel_summary, tavily_hotels_str, crawleo_hotels_str = hotel_data
 
-    budget_in_dest = intent.budget_cny * (rate if isinstance(rate, float) else 1.0)
-    serpapi_flight_summary = serpapi_service.extract_flight_summary(serpapi_flights_raw)
-    serpapi_hotel_summary  = serpapi_service.extract_hotel_summary(serpapi_hotels_raw)
+    # Fill empty search fields with descriptive notes so LLM prompts don't have blank sections
+    _FLIGHT_NO_DATA = "（该数据源未启用或无结果，请基于已有数据源和市场常见航班信息生成完整推荐）"
+    _HOTEL_NO_DATA = "（该数据源未启用或无结果，请基于已有数据源和目的地知名酒店信息生成完整推荐）"
+    if not serpapi_flight_summary or serpapi_flight_summary == "（未获取到实时航班数据）":
+        serpapi_flight_summary = f"【SerpAPI 航班数据】\n{_FLIGHT_NO_DATA}"
+    if not tavily_flights_str:
+        tavily_flights_str = f"【Tavily 航班搜索】\n{_FLIGHT_NO_DATA}"
+    if not crawleo_flights_str:
+        crawleo_flights_str = f"【Crawleo 航班搜索】\n{_FLIGHT_NO_DATA}"
+    if not serpapi_hotel_summary or serpapi_hotel_summary == "（未获取到实时酒店数据）":
+        serpapi_hotel_summary = f"【SerpAPI 酒店数据】\n{_HOTEL_NO_DATA}"
+    if not tavily_hotels_str:
+        tavily_hotels_str = f"【Tavily 酒店搜索】\n{_HOTEL_NO_DATA}"
+    if not crawleo_hotels_str:
+        crawleo_hotels_str = f"【Crawleo 酒店搜索】\n{_HOTEL_NO_DATA}"
 
-    cached = _extract_cached_results(prev_itinerary) if prev_itinerary else {}
+    # ── 2c: Parallel LLM agent execution ─────────────────────────────
+    cached_prev = _extract_cached_results(prev_itinerary) if prev_itinerary else {}
+    sem = asyncio.Semaphore(settings.agent_concurrency)
+
+    async def _run_with_sem(coro):
+        async with sem:
+            return await coro
 
     async def _run_or_cache(agent_name: str, coro, cached_value):
         if agent_name in skip_set and cached_value is not None:
             return cached_value
-        return await coro
+        return await _run_with_sem(coro)
 
-    currency_agent  = CurrencyAgent(task_id, intent, status_store, llm_config)
-    budget_agent    = BudgetAgent(task_id, intent, status_store, llm_config)
     flight_agent    = FlightAgent(task_id, intent, status_store, llm_config)
     hotel_agent     = HotelAgent(task_id, intent, status_store, llm_config)
     attraction_agent = AttractionAgent(task_id, intent, status_store, llm_config)
     weather_agent   = WeatherAgent(task_id, intent, status_store, llm_config)
 
-    # Run LLM-heavy specialists in low-concurrency mode to avoid provider
-    # concurrency-limit 429 errors. Currency is prioritized first.
-    currency = await _run_or_cache(
-        "currency_agent",
-        currency_agent.run(extra_context={
-            "to_currency": to_currency,
-            "rate": rate,
-            "budget_in_dest": budget_in_dest,
-        }),
-        cached.get("currency"),
-    )
-    budget = await _run_or_cache(
-        "budget_agent",
-        budget_agent.run(),
-        cached.get("budget"),
-    )
-    flights = await _run_or_cache(
-        "flight_agent",
-        flight_agent.run(extra_context={
-            "flight_budget_cny": flight_budget,
-            "serpapi_data": serpapi_flight_summary,
-            "tavily_data": tavily_flights_str,
-            "crawleo_data": crawleo_flights_str,
-        }),
-        cached.get("flights"),
-    )
-    hotels = await _run_or_cache(
-        "hotel_agent",
-        hotel_agent.run(extra_context={
-            "hotel_budget_cny": hotel_budget,
-            "serpapi_data": serpapi_hotel_summary,
-            "tavily_data": tavily_hotels_str,
-            "crawleo_data": crawleo_hotels_str,
-        }),
-        cached.get("hotels"),
-    )
-    attractions = await _run_or_cache(
-        "attraction_agent",
-        attraction_agent.run(),
-        cached.get("attractions"),
-    )
-    weather = await _run_or_cache(
-        "weather_agent",
-        weather_agent.run(extra_context={"weather_data": forecast_raw}),
-        cached.get("weather"),
+    # Run all 4 LLM agents in parallel (bounded by semaphore)
+    flights, hotels, attractions, weather = await asyncio.gather(
+        _run_or_cache(
+            "flight_agent",
+            flight_agent.run(extra_context={
+                "flight_budget_cny": flight_budget,
+                "serpapi_data": serpapi_flight_summary,
+                "tavily_data": tavily_flights_str,
+                "crawleo_data": crawleo_flights_str,
+            }),
+            cached_prev.get("flights"),
+        ),
+        _run_or_cache(
+            "hotel_agent",
+            hotel_agent.run(extra_context={
+                "hotel_budget_cny": hotel_budget,
+                "serpapi_data": serpapi_hotel_summary,
+                "tavily_data": tavily_hotels_str,
+                "crawleo_data": crawleo_hotels_str,
+            }),
+            cached_prev.get("hotels"),
+        ),
+        _run_or_cache(
+            "attraction_agent",
+            attraction_agent.run(),
+            cached_prev.get("attractions"),
+        ),
+        _run_or_cache(
+            "weather_agent",
+            weather_agent.run(extra_context={"weather_data": forecast_raw}),
+            cached_prev.get("weather"),
+        ),
     )
 
-    currency:   CurrencyInfo    # type: ignore[assignment]
-    budget:     BudgetBreakdown  # type: ignore[assignment]
-    flights:    FlightResult    # type: ignore[assignment]
-    hotels:     HotelResult     # type: ignore[assignment]
+    flights:    FlightResult       # type: ignore[assignment]
+    hotels:     HotelResult        # type: ignore[assignment]
     attractions: AttractionResult  # type: ignore[assignment]
-    weather:    WeatherResult   # type: ignore[assignment]
+    weather:    WeatherResult      # type: ignore[assignment]
 
     logger.info("[task:%s] Phase 2 complete", task_id)
 

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Share, MapPin, Sun, ThumbsUp, Train, Hotel, Clock, Wallet,
   Mountain, Network, User, Bot, Loader2,
@@ -721,7 +723,9 @@ function ChatPanel({
                           <span className={`text-sm ${msg.confirmed === 'accepted' ? 'text-emerald-600' : 'text-on-surface-variant'}`}>{msg.text}</span>
                         ) : (
                           <div>
-                            <p className="text-[14px] text-on-surface leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                            <div className="prose prose-sm prose-neutral max-w-none text-[14px] leading-relaxed prose-p:my-1.5 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-strong:text-on-surface prose-strong:font-semibold prose-headings:text-on-surface prose-headings:font-semibold prose-h3:text-[15px] prose-h4:text-[14px] prose-p:text-on-surface prose-li:text-on-surface">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
+                            </div>
                             <div className="flex items-center gap-0.5 mt-2">
                               <button className="w-6 h-6 rounded flex items-center justify-center text-on-surface-variant/30 hover:text-on-surface-variant hover:bg-surface-container-low transition-colors">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

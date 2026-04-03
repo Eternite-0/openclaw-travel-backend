@@ -180,7 +180,7 @@ class BaseSpecialistAgent:
         schema_json = json.dumps(
             self.output_schema.model_json_schema(),
             ensure_ascii=False,
-            indent=2,
+            separators=(",", ":"),
         )
         fmt_ctx: dict[str, Any] = {
             "intent": self.intent.model_dump_json(indent=2),

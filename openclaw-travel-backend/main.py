@@ -13,7 +13,7 @@ from api import chat, history, itinerary, status
 from config import get_settings
 from core.schemas import HealthResponse
 from database import create_db_and_tables
-from services import currency_service
+from services import currency_service, search_cache
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await redis_client.ping()
             app.state.redis = redis_client
             currency_service.set_redis_client(redis_client)
+            search_cache.set_redis_client(redis_client)
             logger.info("Redis connected: %s", settings.redis_url)
         except Exception as exc:
             logger.warning("Redis unavailable (%s) — using in-memory fallback", exc)

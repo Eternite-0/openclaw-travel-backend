@@ -8,6 +8,15 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=15.0)
+    return _http_client
+
 CITY_COORDINATES: dict[str, dict[str, float]] = {
     "纽约": {"lat": 40.7128, "lon": -74.0060},
     "New York": {"lat": 40.7128, "lon": -74.0060},
@@ -130,10 +139,10 @@ async def get_forecast(
         params["end_date"] = (start_date + timedelta(days=days - 1)).isoformat()
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
+        client = _get_client()
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
     except Exception as exc:
         logger.warning("Open-Meteo API failed: %s — using mock data", exc)
         return _mock_forecast(days, start_date)

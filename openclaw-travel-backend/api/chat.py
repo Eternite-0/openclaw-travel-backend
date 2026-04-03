@@ -330,23 +330,26 @@ async def post_chat(
     settings = get_settings()
     llm_config = settings.llm_config
 
-    # ── Quick-reply path: skip pipeline for conversational messages ──────
-    quick_reply = await _quick_classify_and_reply(
-        message=body.message,
-        session_id=session_id,
-        llm_config=llm_config,
-        redis_client=redis_client,
-        task_id=body.task_id,
-        frontend_context=body.itinerary_context,
-    )
-    if quick_reply is not None:
-        logger.info("[session:%s] Quick reply returned (no pipeline)", session_id)
-        return ChatResponse(
+    # New chat (no existing task context) should always start full pipeline.
+    # Quick/pipeline classification only applies to follow-up messages.
+    if body.task_id:
+        # ── Quick-reply path: skip pipeline for conversational follow-ups ─────
+        quick_reply = await _quick_classify_and_reply(
+            message=body.message,
             session_id=session_id,
-            message=quick_reply,
-            response_type="quick",
-            quick_reply=quick_reply,
+            llm_config=llm_config,
+            redis_client=redis_client,
+            task_id=body.task_id,
+            frontend_context=body.itinerary_context,
         )
+        if quick_reply is not None:
+            logger.info("[session:%s] Quick reply returned (no pipeline)", session_id)
+            return ChatResponse(
+                session_id=session_id,
+                message=quick_reply,
+                response_type="quick",
+                quick_reply=quick_reply,
+            )
 
     # ── Pipeline path: full multi-agent planning ─────────────────────────
     task_id = str(uuid4())

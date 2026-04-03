@@ -52,7 +52,7 @@ class HotelAgent(BaseSpecialistAgent):
         schema_json = json.dumps(
             self.output_schema.model_json_schema(),
             ensure_ascii=False,
-            indent=2,
+            separators=(",", ":"),
         )
         hotel_budget = context.get("hotel_budget_cny", self.intent.budget_cny * 0.25)
         per_night = hotel_budget / max(self.intent.duration_days, 1)

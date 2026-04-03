@@ -51,7 +51,7 @@ class FlightAgent(BaseSpecialistAgent):
         schema_json = json.dumps(
             self.output_schema.model_json_schema(),
             ensure_ascii=False,
-            indent=2,
+            separators=(",", ":"),
         )
         return self.SYSTEM_PROMPT_TEMPLATE.format(
             intent=self.intent.model_dump_json(indent=2),

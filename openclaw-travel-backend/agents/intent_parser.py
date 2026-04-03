@@ -64,7 +64,7 @@ class IntentParserAgent(BaseSpecialistAgent):
         schema_json = json.dumps(
             self.output_schema.model_json_schema(),
             ensure_ascii=False,
-            indent=2,
+            separators=(",", ":"),
         )
         history = context.get("history", self._history)
         user_message = context.get("user_message", self._user_message)

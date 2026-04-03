@@ -12,6 +12,15 @@ logger = logging.getLogger(__name__)
 CRAWLEO_SEARCH_URL = "https://api.crawleo.dev/search"
 CRAWLEO_CRAWL_URL = "https://api.crawleo.dev/crawl"
 
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=15.0)
+    return _http_client
+
 
 def _auth_headers() -> dict[str, str]:
     settings = get_settings()
@@ -30,17 +39,17 @@ async def search(query: str, count: int = 5) -> dict[str, Any]:
 
     params = {"query": query, "count": count}
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                CRAWLEO_SEARCH_URL,
-                params=params,
-                headers=_auth_headers(),
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            results = data.get("results", data.get("data", []))
-            logger.info("Crawleo search '%s' — %d results", query[:60], len(results))
-            return data
+        client = _get_client()
+        resp = await client.get(
+            CRAWLEO_SEARCH_URL,
+            params=params,
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results = data.get("results", data.get("data", []))
+        logger.info("Crawleo search '%s' — %d results", query[:60], len(results))
+        return data
     except Exception as exc:
         logger.warning("Crawleo search failed for '%s': %s", query, exc)
         return {}
@@ -57,16 +66,16 @@ async def crawl(url: str, markdown: bool = True) -> dict[str, Any]:
 
     params: dict[str, Any] = {"urls": url, "markdown": str(markdown).lower()}
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.get(
-                CRAWLEO_CRAWL_URL,
-                params=params,
-                headers=_auth_headers(),
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            logger.info("Crawleo crawl '%s' — success", url[:80])
-            return data
+        client = _get_client()
+        resp = await client.get(
+            CRAWLEO_CRAWL_URL,
+            params=params,
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info("Crawleo crawl '%s' — success", url[:80])
+        return data
     except Exception as exc:
         logger.warning("Crawleo crawl failed for '%s': %s", url, exc)
         return {}

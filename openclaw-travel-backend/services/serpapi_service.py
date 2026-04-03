@@ -12,6 +12,15 @@ logger = logging.getLogger(__name__)
 
 SERPAPI_BASE = "https://serpapi.com/search"
 
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=20.0)
+    return _http_client
+
 CITY_TO_IATA: dict[str, str] = {
     "广州": "CAN", "Guangzhou": "CAN",
     "北京": "PEK", "Beijing": "PEK",
@@ -92,16 +101,16 @@ async def search_flights(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.get(SERPAPI_BASE, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-            logger.info(
-                "SerpAPI flights: %s→%s on %s — %d results",
-                dep_iata, arr_iata, outbound_date,
-                len(data.get("best_flights", []) or data.get("other_flights", [])),
-            )
-            return data
+        client = _get_client()
+        resp = await client.get(SERPAPI_BASE, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info(
+            "SerpAPI flights: %s→%s on %s — %d results",
+            dep_iata, arr_iata, outbound_date,
+            len(data.get("best_flights", []) or data.get("other_flights", [])),
+        )
+        return data
     except Exception as exc:
         logger.warning("SerpAPI flight search failed: %s", exc)
         return {}
@@ -132,16 +141,16 @@ async def search_hotels(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.get(SERPAPI_BASE, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-            logger.info(
-                "SerpAPI hotels: %s %s→%s — %d results",
-                city, check_in, check_out,
-                len(data.get("properties", [])),
-            )
-            return data
+        client = _get_client()
+        resp = await client.get(SERPAPI_BASE, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info(
+            "SerpAPI hotels: %s %s→%s — %d results",
+            city, check_in, check_out,
+            len(data.get("properties", [])),
+        )
+        return data
     except Exception as exc:
         logger.warning("SerpAPI hotel search failed: %s", exc)
         return {}

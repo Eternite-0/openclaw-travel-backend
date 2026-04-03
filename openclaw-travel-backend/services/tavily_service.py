@@ -11,6 +11,15 @@ logger = logging.getLogger(__name__)
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=15.0)
+    return _http_client
+
 
 async def search(
     query: str,
@@ -39,17 +48,17 @@ async def search(
         payload["include_domains"] = include_domains
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(TAVILY_SEARCH_URL, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            logger.info(
-                "Tavily search '%s' — %d results, answer: %s",
-                query[:60],
-                len(data.get("results", [])),
-                bool(data.get("answer")),
-            )
-            return data
+        client = _get_client()
+        resp = await client.post(TAVILY_SEARCH_URL, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info(
+            "Tavily search '%s' — %d results, answer: %s",
+            query[:60],
+            len(data.get("results", [])),
+            bool(data.get("answer")),
+        )
+        return data
     except Exception as exc:
         logger.warning("Tavily search failed for '%s': %s", query, exc)
         return {}

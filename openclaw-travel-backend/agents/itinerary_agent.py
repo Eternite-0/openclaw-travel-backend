@@ -96,10 +96,10 @@ created_at: {created_at}
             if obj is None:
                 return "{}"
             if isinstance(obj, BaseModel):
-                return obj.model_dump_json()
+                return obj.model_dump_json(indent=2)
             if isinstance(obj, str):
                 return obj
-            return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=str)
+            return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
 
         def _compact_attractions(obj) -> str:
             if obj is None:
@@ -119,7 +119,7 @@ created_at: {created_at}
                     "must_see": a.get("must_see", False),
                     "tips": str(a.get("tips", ""))[:80],
                 })
-            return json.dumps(slim, ensure_ascii=False, separators=(",", ":"))
+            return json.dumps(slim, ensure_ascii=False, indent=2)
 
         flights_data = context.get("flights")
         recommended_flight = "{}"
@@ -136,8 +136,10 @@ created_at: {created_at}
                 recommended_hotel = hotels_data.options[idx].model_dump_json()
 
         previous_itinerary = context.get("previous_itinerary", self._previous_itinerary)
+        if isinstance(previous_itinerary, str) and len(previous_itinerary) > 3500:
+            previous_itinerary = previous_itinerary[:3500] + "...(truncated)"
         return self.SYSTEM_PROMPT_TEMPLATE.format(
-            intent=self.intent.model_dump_json(),
+            intent=self.intent.model_dump_json(indent=2),
             currency=_compact(context.get("currency")),
             budget=_compact(context.get("budget")),
             recommended_flight=recommended_flight,
