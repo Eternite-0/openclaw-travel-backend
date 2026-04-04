@@ -1,5 +1,5 @@
 import {
-  Sparkles, Banknote, Calculator, Plane, Hotel, Compass, CloudSun, Route,
+  Sparkles, Banknote, Calculator, Plane, Hotel, Compass, CloudSun, Route, ShieldCheck,
 } from 'lucide-react';
 import type { AgentStatus, AgentStyleConfig } from './types';
 
@@ -8,6 +8,7 @@ export const AGENT_PLACEHOLDERS: AgentStatus[] = [
   { agent_name: 'intent_parser', display_name: '意图解析', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
   { agent_name: 'currency_agent', display_name: '汇率分析', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
   { agent_name: 'budget_agent', display_name: '预算规划', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
+  { agent_name: 'visa_agent', display_name: '签证/入境信息', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
   { agent_name: 'flight_agent', display_name: '航班查询', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
   { agent_name: 'hotel_agent', display_name: '酒店推荐', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
   { agent_name: 'attraction_agent', display_name: '景点规划', status: 'pending', started_at: null, finished_at: null, message: '', result_summary: '' },
@@ -19,6 +20,7 @@ export const AGENT_STYLE: Record<string, AgentStyleConfig> = {
   intent_parser:    { icon: Sparkles,   color: 'text-indigo-500', bg: 'bg-indigo-50',  activeBg: 'bg-indigo-100' },
   currency_agent:   { icon: Banknote,   color: 'text-amber-500',  bg: 'bg-amber-50',   activeBg: 'bg-amber-100' },
   budget_agent:     { icon: Calculator,  color: 'text-emerald-500', bg: 'bg-emerald-50', activeBg: 'bg-emerald-100' },
+  visa_agent:       { icon: ShieldCheck, color: 'text-cyan-500',   bg: 'bg-cyan-50',    activeBg: 'bg-cyan-100' },
   flight_agent:     { icon: Plane,      color: 'text-sky-500',    bg: 'bg-sky-50',     activeBg: 'bg-sky-100' },
   hotel_agent:      { icon: Hotel,      color: 'text-rose-500',   bg: 'bg-rose-50',    activeBg: 'bg-rose-100' },
   attraction_agent: { icon: Compass,    color: 'text-violet-500', bg: 'bg-violet-50',  activeBg: 'bg-violet-100' },
@@ -49,6 +51,13 @@ export const AGENT_MESSAGES: Record<string, string[]> = {
     '估算餐饮与景点花费...',
     '优化各项支出结构...',
     '生成预算明细报告...',
+  ],
+  visa_agent: [
+    '查询目的地签证政策...',
+    '检查免签/落地签条件...',
+    '整理所需申请材料...',
+    '估算办理费用与时间...',
+    '生成入境须知摘要...',
   ],
   flight_agent: [
     '搜索最优出发航班...',

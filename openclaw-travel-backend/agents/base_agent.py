@@ -47,6 +47,7 @@ class BaseSpecialistAgent:
     agent_name: str = ""
     display_name: str = ""
     output_schema: type[BaseModel] = BaseModel
+    default_temperature: float = 0.3
 
     SYSTEM_PROMPT_TEMPLATE: str = ""
 
@@ -67,7 +68,7 @@ class BaseSpecialistAgent:
         self._api_key = cfg.get("api_key", settings.openai_api_key)
         self._base_url = cfg.get("base_url", settings.openai_base_url).rstrip("/")
         self._model = cfg.get("model", settings.openai_model)
-        self._temperature = llm_config.get("temperature", 0.3)
+        self._temperature = llm_config.get("temperature", self.default_temperature)
         self._client = AsyncOpenAI(
             api_key=self._api_key,
             base_url=self._base_url,

@@ -12,6 +12,7 @@ class AttractionAgent(BaseSpecialistAgent):
     agent_name = "attraction_agent"
     display_name = "景点规划"
     output_schema = AttractionResult
+    default_temperature = 0.5
 
     SYSTEM_PROMPT_TEMPLATE = """你是"智慧旅行助手"系统中的景点规划专家（AttractionAgent）。
 
@@ -28,14 +29,34 @@ class AttractionAgent(BaseSpecialistAgent):
 7. opening_hours 格式示例："09:00-17:00（周一闭馆）"。
 8. name 为英文名，name_zh 为中文名。
 9. tips 字段提供该景点的实用参观建议（1-2句话）。
+10. address 字段必须填写景点的真实地址，优先使用下方实时搜索数据中的地址。
+11. 优先参考下方【实时搜索数据】中提到的景点信息，与你的知识融合后生成推荐。
 
 【旅行意图】
 {intent}
+
+【实时搜索数据（来自 Tavily）】
+{tavily_data}
 
 【输出 JSON Schema】
 {schema}
 
 现在请输出 JSON："""
+
+    def _build_system_prompt(self, context: dict) -> str:
+        schema_json = json.dumps(
+            self.output_schema.model_json_schema(),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        tavily_data = context.get("tavily_data", "")
+        if not tavily_data:
+            tavily_data = "（未获取到实时景点数据，请基于你的知识推荐）"
+        return self.SYSTEM_PROMPT_TEMPLATE.format(
+            intent=self.intent.model_dump_json(indent=2),
+            tavily_data=tavily_data,
+            schema=schema_json,
+        )
 
     def _summarize(self, result: BaseModel) -> str:
         r: AttractionResult = result  # type: ignore[assignment]

@@ -20,6 +20,8 @@ class TravelIntent(BaseModel):
     travel_style: Literal["budget", "standard", "luxury"] = "standard"
     special_requests: list[str] = []
     change_hints: list[Literal["budget", "hotel", "flight", "itinerary", "dates", "destination", "full"]] = []
+    need_currency: bool = True
+    need_visa: bool = False
 
 
 class CurrencyInfo(BaseModel):
@@ -106,6 +108,16 @@ class WeatherResult(BaseModel):
     packing_suggestions: list[str]
 
 
+class VisaResult(BaseModel):
+    required: bool
+    visa_type: str
+    processing_days: int
+    documents: list[str]
+    fees_cny: float
+    notes: str
+    entry_policy_summary: str
+
+
 class ItineraryActivity(BaseModel):
     time: str
     duration_minutes: int
@@ -132,11 +144,12 @@ class FinalItinerary(BaseModel):
     session_id: str
     created_at: datetime
     intent: TravelIntent
-    currency: CurrencyInfo
+    currency: Optional[CurrencyInfo] = None
     budget: BudgetBreakdown
     recommended_flight: FlightOption
     recommended_hotel: HotelOption
     weather: WeatherResult
+    visa_info: Optional[VisaResult] = None
     highlights: list[str]
     days: list[ItineraryDay]
     total_estimated_cost_cny: float

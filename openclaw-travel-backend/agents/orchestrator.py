@@ -13,6 +13,7 @@ from agents.flight_agent import FlightAgent
 from agents.hotel_agent import HotelAgent
 from agents.intent_parser import IntentParserAgent
 from agents.itinerary_agent import ItineraryAgent
+from agents.visa_agent import VisaAgent
 from agents.weather_agent import WeatherAgent
 from config import get_settings
 from core.memory import MemoryManager
@@ -26,6 +27,7 @@ from core.schemas import (
     HotelOption,
     HotelResult,
     TravelIntent,
+    VisaResult,
     WeatherResult,
 )
 from core.status_store import StatusStore
@@ -41,6 +43,7 @@ ALL_AGENT_NAMES = [
     "intent_parser",
     "currency_agent",
     "budget_agent",
+    "visa_agent",
     "flight_agent",
     "hotel_agent",
     "attraction_agent",
@@ -152,10 +155,18 @@ async def run_travel_pipeline(
     need_flight  = "flight_agent"   not in skip_set
     need_hotel   = "hotel_agent"    not in skip_set
     need_weather = "weather_agent"  not in skip_set
-    need_currency = "currency_agent" not in skip_set
+    # Currency: use intent flag (IntentParser decides based on origin/dest)
+    need_currency = intent.need_currency and "currency_agent" not in skip_set
+    # Visa: use intent flag (IntentParser decides based on border crossing)
+    need_visa = intent.need_visa
 
     # Surface parallel scheduling intent to UI early
-    for agent_name in ("currency_agent", "budget_agent", "flight_agent", "hotel_agent", "attraction_agent", "weather_agent"):
+    active_agents = ["budget_agent", "flight_agent", "hotel_agent", "attraction_agent", "weather_agent"]
+    if need_currency:
+        active_agents.append("currency_agent")
+    if need_visa:
+        active_agents.append("visa_agent")
+    for agent_name in active_agents:
         if agent_name not in skip_set:
             await status_store.update_agent(
                 task_id,
@@ -163,15 +174,23 @@ async def run_travel_pipeline(
                 "running",
                 message="等待外部数据与任务调度...",
             )
+    # Mark skipped agents
+    if not need_currency:
+        await status_store.update_agent(task_id, "currency_agent", "done",
+                                        message="同币种，无需汇率转换", result_summary="CNY → CNY (1.0)")
+    if not need_visa:
+        await status_store.update_agent(task_id, "visa_agent", "done",
+                                        message="无需签证/入境信息", result_summary="境内旅行")
 
     # ── 2a: Deterministic currency + budget (instant, no LLM) ─────────
     rate = 1.0
+    currency = None
     if need_currency:
         rate = await currency_service.get_rate("CNY", to_currency)
-    currency = build_currency_info(intent, rate, to_currency)
-    await status_store.update_agent(task_id, "currency_agent", "done",
-                                    message="完成",
-                                    result_summary=f"1 CNY ≈ {rate:.4f} {to_currency}")
+        currency = build_currency_info(intent, rate, to_currency)
+        await status_store.update_agent(task_id, "currency_agent", "done",
+                                        message="完成",
+                                        result_summary=f"1 CNY ≈ {rate:.4f} {to_currency}")
 
     budget = build_budget(intent)
     await status_store.update_agent(task_id, "budget_agent", "done",
@@ -285,12 +304,59 @@ async def run_travel_pipeline(
 
     async def _noop_tuple():  return ("", "", "")
     async def _noop_list():   return []
+    async def _noop_str():    return ""
 
-    # Pre-fetch external data in parallel (weather + flights + hotels)
+    need_attraction = "attraction_agent" not in skip_set
+
+    async def _fetch_attraction_data() -> str:
+        """Fetch real-time attraction data via Tavily with city-based cache (1h TTL)."""
+        cache_kw = dict(city=intent.dest_city, country=intent.dest_country)
+        cached_result = await search_cache.get("attractions", **cache_kw)
+        if cached_result is not None:
+            logger.info("[task:%s] Attraction search cache HIT", task_id)
+            return cached_result.get("tavily", "")
+        tavily_str = await tavily_service.search_attractions(
+            city=intent.dest_city, country=intent.dest_country,
+        )
+        await search_cache.put("attractions", {"tavily": tavily_str}, **cache_kw)
+        return tavily_str
+
+    async def _fetch_restaurant_data() -> str:
+        """Fetch real-time restaurant data via Tavily with city-based cache."""
+        cache_kw = dict(city=intent.dest_city, style=intent.travel_style)
+        cached_result = await search_cache.get("restaurants", **cache_kw)
+        if cached_result is not None:
+            logger.info("[task:%s] Restaurant search cache HIT", task_id)
+            return cached_result.get("tavily", "")
+        tavily_str = await tavily_service.search_restaurants(
+            city=intent.dest_city, budget_level=intent.travel_style,
+        )
+        await search_cache.put("restaurants", {"tavily": tavily_str}, **cache_kw)
+        return tavily_str
+
+    async def _fetch_visa_data() -> str:
+        """Fetch real-time visa/entry policy data via Tavily."""
+        cache_kw = dict(origin=intent.origin_country, dest=intent.dest_country)
+        cached_result = await search_cache.get("visa", **cache_kw)
+        if cached_result is not None:
+            logger.info("[task:%s] Visa search cache HIT", task_id)
+            return cached_result.get("tavily", "")
+        tavily_str = await tavily_service.search_visa(
+            origin_country=intent.origin_country,
+            dest_country=intent.dest_country,
+            dest_city=intent.dest_city,
+        )
+        await search_cache.put("visa", {"tavily": tavily_str}, **cache_kw)
+        return tavily_str
+
+    # Pre-fetch external data in parallel (weather + flights + hotels + attractions + restaurants + visa)
     (
         forecast_raw,
         flight_data,
         hotel_data,
+        tavily_attractions_str,
+        tavily_restaurants_str,
+        tavily_visa_str,
     ) = await asyncio.gather(
         weather_service.get_forecast(
             lat=coords["lat"], lon=coords["lon"],
@@ -298,6 +364,9 @@ async def run_travel_pipeline(
         ) if need_weather else _noop_list(),
         _fetch_flight_data() if need_flight else _noop_tuple(),
         _fetch_hotel_data() if need_hotel else _noop_tuple(),
+        _fetch_attraction_data() if need_attraction else _noop_str(),
+        _fetch_restaurant_data(),
+        _fetch_visa_data() if need_visa else _noop_str(),
     )
     serpapi_flight_summary, tavily_flights_str, crawleo_flights_str = flight_data
     serpapi_hotel_summary, tavily_hotels_str, crawleo_hotels_str = hotel_data
@@ -336,8 +405,8 @@ async def run_travel_pipeline(
     attraction_agent = AttractionAgent(task_id, intent, status_store, llm_config)
     weather_agent   = WeatherAgent(task_id, intent, status_store, llm_config)
 
-    # Run all 4 LLM agents in parallel (bounded by semaphore)
-    flights, hotels, attractions, weather = await asyncio.gather(
+    # Build parallel tasks list (4 core + optional visa)
+    agent_tasks = [
         _run_or_cache(
             "flight_agent",
             flight_agent.run(extra_context={
@@ -360,7 +429,9 @@ async def run_travel_pipeline(
         ),
         _run_or_cache(
             "attraction_agent",
-            attraction_agent.run(),
+            attraction_agent.run(extra_context={
+                "tavily_data": tavily_attractions_str,
+            }),
             cached_prev.get("attractions"),
         ),
         _run_or_cache(
@@ -368,12 +439,26 @@ async def run_travel_pipeline(
             weather_agent.run(extra_context={"weather_data": forecast_raw}),
             cached_prev.get("weather"),
         ),
-    )
+    ]
 
-    flights:    FlightResult       # type: ignore[assignment]
-    hotels:     HotelResult        # type: ignore[assignment]
-    attractions: AttractionResult  # type: ignore[assignment]
-    weather:    WeatherResult      # type: ignore[assignment]
+    # Conditionally add VisaAgent
+    visa_result: Optional[VisaResult] = None
+    if need_visa:
+        visa_agent = VisaAgent(task_id, intent, status_store, llm_config)
+        agent_tasks.append(
+            _run_with_sem(visa_agent.run(extra_context={
+                "tavily_data": tavily_visa_str,
+            }))
+        )
+
+    results = await asyncio.gather(*agent_tasks)
+
+    flights    = results[0]  # type: FlightResult
+    hotels     = results[1]  # type: HotelResult
+    attractions = results[2]  # type: AttractionResult
+    weather    = results[3]  # type: WeatherResult
+    if need_visa and len(results) > 4:
+        visa_result = results[4]  # type: ignore[assignment]
 
     logger.info("[task:%s] Phase 2 complete", task_id)
 
@@ -395,8 +480,16 @@ async def run_travel_pipeline(
         "hotels": hotels,
         "attractions": attractions,
         "weather": weather,
+        "restaurants": tavily_restaurants_str,
         "previous_itinerary": previous_itinerary_json,
     })  # type: ignore[assignment]
+
+    # Attach optional results
+    if visa_result is not None:
+        itinerary.visa_info = visa_result
+    if currency is not None:
+        itinerary.currency = currency
+
     logger.info("[task:%s] Itinerary assembled", task_id)
 
     # ── Phase 4: Persist + Update Memory ────────────────────────────────

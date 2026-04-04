@@ -75,6 +75,40 @@ async def search_hotels(city: str, budget_cny: float, duration_days: int) -> str
     return _format_results(data, label="Tavily 酒店搜索")
 
 
+async def search_attractions(city: str, country: str = "") -> str:
+    """Search for top attractions in a city and return a formatted summary for LLM context."""
+    location = f"{city}, {country}" if country else city
+    query = (
+        f"top tourist attractions in {location} "
+        f"must-see landmarks museums nature entertainment food "
+        f"opening hours ticket price address reviews"
+    )
+    data = await search(query, search_depth="basic", max_results=8)
+    return _format_results(data, label="Tavily 景点搜索")
+
+
+async def search_restaurants(city: str, cuisine_style: str = "", budget_level: str = "standard") -> str:
+    """Search for restaurant recommendations in a city."""
+    budget_hint = {"budget": "cheap affordable", "standard": "popular local", "luxury": "fine dining upscale"}.get(budget_level, "popular")
+    cuisine = f"{cuisine_style} " if cuisine_style else ""
+    query = (
+        f"best {cuisine}restaurants in {city} {budget_hint} "
+        f"local food recommendations address price reviews"
+    )
+    data = await search(query, search_depth="basic", max_results=6)
+    return _format_results(data, label="Tavily 餐厅搜索")
+
+
+async def search_visa(origin_country: str, dest_country: str, dest_city: str = "") -> str:
+    """Search for visa/entry policy information between two countries."""
+    query = (
+        f"{origin_country} citizens travel to {dest_country} {dest_city} "
+        f"visa requirements entry policy 2024 2025 documents processing time fees"
+    )
+    data = await search(query, search_depth="basic", max_results=5)
+    return _format_results(data, label="Tavily 签证搜索")
+
+
 async def search_flights(
     origin_city: str,
     dest_city: str,

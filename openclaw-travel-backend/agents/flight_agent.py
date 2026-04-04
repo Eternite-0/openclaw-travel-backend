@@ -27,8 +27,9 @@ class FlightAgent(BaseSpecialistAgent):
 6. 航班号格式：航空公司代码 + 数字，如 "CA837"、"MU588"。
 7. datetime 格式必须是 ISO 8601：YYYY-MM-DDTHH:MM:SS。
 8. 价格单位为人民币（CNY），必须以实时数据为准，无数据时参考市场水平。
-9. booking_tip 必须包含免责声明："价格仅供参考，实际以购票平台为准"。
-10. recommended_index 为 0-2 之间的整数，指向性价比最高的选项。
+9. 如果搜索数据中出现了具体价格，必须使用该价格±10%范围内的数值，不得凭空使用与数据相差超过30%的价格。
+10. booking_tip 必须包含免责声明："价格仅供参考，实际以购票平台为准"，并注明数据来源（如"来源：SerpAPI实时数据"或"来源：Tavily搜索"或"来源：市场估价"）。
+11. recommended_index 为 0-2 之间的整数，指向性价比最高的选项。
 
 【旅行意图】
 {intent}

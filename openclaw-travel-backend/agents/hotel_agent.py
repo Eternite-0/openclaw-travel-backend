@@ -25,10 +25,12 @@ class HotelAgent(BaseSpecialistAgent):
 4. options 列表必须恰好包含3个酒店选项，分别对应经济/标准/豪华三个档次。
 5. 优先使用下方【实时数据】中的真实酒店；若数据不足，以目的地知名酒店补全。
 6. 价格单位为人民币（CNY），以实时数据为准，无数据时参考市场水平。
-7. total_price_cny = price_per_night_cny × duration_days。
-8. highlights 列表须包含3-5个该酒店的主要特色（可从实时数据中提取评价/设施）。
-9. recommended_index 为 0-2 之间的整数，指向与旅行风格和预算最匹配的选项。
-10. area 字段填写酒店所在区域，便于旅行者了解地理位置。
+7. 如果搜索数据中出现了具体价格，必须使用该价格±10%范围内的数值，不得凭空使用与数据相差超过30%的价格。
+8. total_price_cny = price_per_night_cny × duration_days。
+9. highlights 列表须包含3-5个该酒店的主要特色（可从实时数据中提取评价/设施）。
+10. recommended_index 为 0-2 之间的整数，指向与旅行风格和预算最匹配的选项。
+11. area 字段填写酒店所在区域，便于旅行者了解地理位置。
+12. booking_tip 必须注明数据来源（如"来源：SerpAPI实时数据"或"来源：Tavily搜索"或"来源：市场估价"）。
 
 【旅行意图】
 {intent}

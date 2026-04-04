@@ -10,6 +10,7 @@ class IntentParserAgent(BaseSpecialistAgent):
     agent_name = "intent_parser"
     display_name = "意图解析"
     output_schema = TravelIntent
+    default_temperature = 0.1
 
     SYSTEM_PROMPT_TEMPLATE = """你是"智慧旅行助手"系统中的意图解析专家（IntentParserAgent）。
 
@@ -36,6 +37,18 @@ class IntentParserAgent(BaseSpecialistAgent):
    - 用户改了目的地 → ["destination"]
    - 用户改了多项或全部重新规划 → ["full"]
    - 这是第一次请求（无历史行程） → [] （空列表）
+8. need_currency 字段规则（是否需要汇率转换）：
+   - 中国大陆 → 中国大陆（如北京→上海、广州→成都）：false（同币种无需转换）
+   - 中国大陆 → 港澳台（香港/澳门/台湾）：true（港币HKD/澳门币MOP/新台币TWD）
+   - 中国大陆 → 任何国外目的地：true
+   - 判断依据：出发地和目的地是否使用不同货币
+9. need_visa 字段规则（是否需要签证/入境信息）：
+   - 中国大陆 → 中国大陆：false
+   - 中国大陆 → 港澳台：true（需要通行证信息）
+   - 中国大陆 → 国外：true（需要签证信息）
+   - 同一国家内的旅行：false
+   - 跨国旅行：true
+   - 判断依据：是否跨越需要出入境手续的边境
 
 【上一次规划的行程摘要（若有）】
 {previous_summary}
