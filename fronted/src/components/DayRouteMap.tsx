@@ -1,9 +1,10 @@
-import { useMemo, useEffect } from 'react';
+import { useMemo, useEffect, useState, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Polyline, Popup, useMap } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { ItineraryActivity } from '../types';
+import { fetchWalkingRoute } from '../api';
 
 /* ── Numbered marker icon factory ──────────────────────────────────────────── */
 function createNumberedIcon(index: number, isFirst: boolean, isLast: boolean) {
@@ -92,6 +93,48 @@ export function DayRouteMap({ activities, dayNumber }: DayRouteMapProps) {
     [points]
   );
 
+  /* ── Detect hiking/mountain scenario → skip walking API ────────────── */
+  const HIKING_KEYWORDS = /山|徒步|登山|爬山|步道|栈道|索道|峰|岭|trail|hike|mountain|trek|climb/i;
+  const isHikingRoute = useMemo(
+    () => activities.some((a) =>
+      HIKING_KEYWORDS.test(a.activity) || HIKING_KEYWORDS.test(a.location)
+    ),
+    [activities],
+  );
+
+  /* ── Walking route segments from Gaode API ─────────────────────────── */
+  const [routeSegments, setRouteSegments] = useState<[number, number][][] | null>(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+
+  const positionsKey = useMemo(
+    () => points.map((p) => `${p.lat},${p.lng}`).join('|'),
+    [points],
+  );
+
+  const loadWalkingRoute = useCallback(async () => {
+    if (points.length < 2 || isHikingRoute) {
+      setRouteSegments(null);
+      return;
+    }
+    setRouteLoading(true);
+    try {
+      const resp = await fetchWalkingRoute(points.map((p) => ({ lat: p.lat, lng: p.lng })));
+      if (resp.ok && resp.segments.length > 0) {
+        setRouteSegments(resp.segments);
+      } else {
+        setRouteSegments(null);
+      }
+    } catch {
+      setRouteSegments(null);
+    } finally {
+      setRouteLoading(false);
+    }
+  }, [positionsKey, isHikingRoute]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    loadWalkingRoute();
+  }, [loadWalkingRoute]);
+
   if (points.length === 0) {
     return (
       <div className="bg-gradient-to-br from-teal-50 to-emerald-100 rounded-xl aspect-[16/10] flex items-center justify-center shadow-[0_8px_32px_rgba(87,94,112,0.04)] ring-1 ring-outline-variant/10">
@@ -115,6 +158,7 @@ export function DayRouteMap({ activities, dayNumber }: DayRouteMapProps) {
         </div>
         <span className="text-[11px] font-bold text-slate-700 tracking-tight">
           第{dayNumber}天路线 · {points.length}个地点
+          {routeLoading && ' · 加载路径...'}
         </span>
       </div>
 
@@ -132,28 +176,38 @@ export function DayRouteMap({ activities, dayNumber }: DayRouteMapProps) {
         />
         <FitBounds positions={positions} />
 
-        {/* Route line: single polyline 1→2→...→N */}
-        <Polyline
-          positions={positions}
-          pathOptions={{
-            color: '#6366f1',
-            weight: 3,
-            opacity: 0.85,
-            lineCap: 'round',
-            lineJoin: 'round',
-          }}
-        />
+        {/* Route lines: real walking path or fallback straight lines */}
+        {routeSegments
+          ? routeSegments.map((seg, i) => (
+              <Polyline
+                key={`seg-${dayNumber}-${i}`}
+                positions={seg}
+                pathOptions={{
+                  color: '#6366f1',
+                  weight: 4,
+                  opacity: 0.85,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                }}
+              />
+            ))
+          : (
+              <Polyline
+                positions={positions}
+                pathOptions={{
+                  color: '#6366f1',
+                  weight: 3,
+                  opacity: 0.85,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                }}
+              />
+            )
+        }
 
-        {/* Clustered markers: auto-group when overlapping, spiderfy on click */}
-        <MarkerClusterGroup
-          iconCreateFunction={createClusterIcon}
-          maxClusterRadius={25}
-          disableClusteringAtZoom={14}
-          spiderfyOnMaxZoom={true}
-          showCoverageOnHover={false}
-          zoomToBoundsOnClick={true}
-        >
-          {points.map((pt, idx) => (
+        {/* Markers: hiking → no cluster (keep aligned with polyline); city → cluster */}
+        {isHikingRoute ? (
+          points.map((pt, idx) => (
             <Marker
               key={`${dayNumber}-${idx}`}
               position={[pt.lat, pt.lng]}
@@ -167,8 +221,33 @@ export function DayRouteMap({ activities, dayNumber }: DayRouteMapProps) {
                 </div>
               </Popup>
             </Marker>
-          ))}
-        </MarkerClusterGroup>
+          ))
+        ) : (
+          <MarkerClusterGroup
+            iconCreateFunction={createClusterIcon}
+            maxClusterRadius={25}
+            disableClusteringAtZoom={14}
+            spiderfyOnMaxZoom={true}
+            showCoverageOnHover={false}
+            zoomToBoundsOnClick={true}
+          >
+            {points.map((pt, idx) => (
+              <Marker
+                key={`${dayNumber}-${idx}`}
+                position={[pt.lat, pt.lng]}
+                icon={createNumberedIcon(idx, idx === 0, idx === points.length - 1)}
+              >
+                <Popup>
+                  <div className="text-xs min-w-[120px]">
+                    <p className="font-bold text-sm">{pt.name}</p>
+                    <p className="text-gray-500 mt-0.5">{pt.time}</p>
+                    <p className="text-gray-400 mt-0.5">{pt.location}</p>
+                  </div>
+                </Popup>
+              </Marker>
+            ))}
+          </MarkerClusterGroup>
+        )}
       </MapContainer>
     </div>
   );

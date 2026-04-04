@@ -94,3 +94,20 @@ export async function deleteConversation(convId: string): Promise<void> {
   const res = await fetch(`${API_BASE}/conversations/${convId}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`删除对话失败 (${res.status})`);
 }
+
+export interface WalkingRouteResponse {
+  segments: [number, number][][];
+  ok: boolean;
+}
+
+export async function fetchWalkingRoute(
+  waypoints: { lat: number; lng: number }[],
+): Promise<WalkingRouteResponse> {
+  const res = await fetch(`${API_BASE}/route/walking`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ waypoints }),
+  });
+  if (!res.ok) return { segments: [], ok: false };
+  return res.json();
+}

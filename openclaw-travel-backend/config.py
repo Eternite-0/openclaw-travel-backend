@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     crawleo_api_key: str = ""
     crawleo_enabled: bool = True
 
+    amap_api_key: str = ""
+    amap_enabled: bool = True
+
     # Search strategy: "serpapi_first" (default), "tavily_first", "all" (legacy triple-source)
     search_strategy: str = "serpapi_first"
     # Max concurrent LLM agent calls (avoid 429 from provider)
