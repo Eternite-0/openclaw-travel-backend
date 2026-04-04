@@ -38,6 +38,20 @@ async def list_tasks(
     ]
 
 
+@router.delete("/task/{task_id}")
+async def delete_task(
+    task_id: str,
+    db: Session = Depends(get_session),
+) -> dict:
+    statement = select(ItineraryRecord).where(ItineraryRecord.task_id == task_id)
+    record = db.exec(statement).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found.")
+    db.delete(record)
+    db.commit()
+    return {"detail": "deleted"}
+
+
 @router.get("/task/{task_id}/result", response_model=FinalItinerary)
 async def get_task_result(
     task_id: str,

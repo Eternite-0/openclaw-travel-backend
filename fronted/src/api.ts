@@ -52,6 +52,11 @@ export async function fetchTasks(): Promise<ItinerarySummary[]> {
   return res.json();
 }
 
+export async function deleteTask(taskId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/task/${taskId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`删除行程失败 (${res.status})`);
+}
+
 export async function fetchConversations(): Promise<Conversation[]> {
   const res = await fetch(`${API_BASE}/conversations`);
   if (!res.ok) throw new Error(`获取对话列表失败 (${res.status})`);

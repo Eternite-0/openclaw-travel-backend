@@ -60,12 +60,15 @@ async def search(
         )
         return data
     except Exception as exc:
-        logger.warning("Tavily search failed for '%s': %s", query, exc)
+        logger.warning("Tavily search failed for '%s' [%s]: %s", query, type(exc).__name__, exc)
         return {}
 
 
 async def search_hotels(city: str, budget_cny: float, duration_days: int) -> str:
     """Search for hotel information and return a formatted summary for LLM context."""
+    if not city or not city.strip():
+        logger.warning("Tavily search_hotels skipped: empty city")
+        return "（Tavily 酒店搜索：城市参数为空，跳过）"
     per_night = budget_cny * 0.25 / max(duration_days, 1)
     query = (
         f"best hotels in {city} price range budget mid-range luxury "
@@ -77,6 +80,9 @@ async def search_hotels(city: str, budget_cny: float, duration_days: int) -> str
 
 async def search_attractions(city: str, country: str = "") -> str:
     """Search for top attractions in a city and return a formatted summary for LLM context."""
+    if not city or not city.strip():
+        logger.warning("Tavily search_attractions skipped: empty city")
+        return "（Tavily 景点搜索：城市参数为空，跳过）"
     location = f"{city}, {country}" if country else city
     query = (
         f"top tourist attractions in {location} "
@@ -89,6 +95,9 @@ async def search_attractions(city: str, country: str = "") -> str:
 
 async def search_restaurants(city: str, cuisine_style: str = "", budget_level: str = "standard") -> str:
     """Search for restaurant recommendations in a city."""
+    if not city or not city.strip():
+        logger.warning("Tavily search_restaurants skipped: empty city")
+        return "（Tavily 餐厅搜索：城市参数为空，跳过）"
     budget_hint = {"budget": "cheap affordable", "standard": "popular local", "luxury": "fine dining upscale"}.get(budget_level, "popular")
     cuisine = f"{cuisine_style} " if cuisine_style else ""
     query = (

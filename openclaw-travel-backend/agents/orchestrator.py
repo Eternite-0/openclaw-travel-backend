@@ -102,8 +102,10 @@ async def run_travel_pipeline(
 
     # ── Phase 1: Intent Parsing ──────────────────────────────────────
     logger.info("[task:%s] Phase 1 — Intent parsing", task_id)
+    logger.info("[task:%s] user_message=%s", task_id, user_message[:200])
     history_messages = await memory.get_short_term()
     history_str = memory.build_context_string(history_messages[:-1])
+    logger.info("[task:%s] history_str=%s", task_id, history_str[:300] if history_str else "(empty)")
 
     dummy_intent = TravelIntent(
         origin_city="广州",
@@ -174,13 +176,11 @@ async def run_travel_pipeline(
                 "running",
                 message="等待外部数据与任务调度...",
             )
-    # Mark skipped agents
+    # Remove unneeded agents from status (so frontend won't show them at all)
     if not need_currency:
-        await status_store.update_agent(task_id, "currency_agent", "done",
-                                        message="同币种，无需汇率转换", result_summary="CNY → CNY (1.0)")
+        await status_store.remove_agent(task_id, "currency_agent")
     if not need_visa:
-        await status_store.update_agent(task_id, "visa_agent", "done",
-                                        message="无需签证/入境信息", result_summary="境内旅行")
+        await status_store.remove_agent(task_id, "visa_agent")
 
     # ── 2a: Deterministic currency + budget (instant, no LLM) ─────────
     rate = 1.0

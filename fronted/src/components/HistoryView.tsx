@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'motion/react';
 import {
-  History, CalendarDays, Wallet, Clock, Plane, ChevronRight, Loader2,
+  History, CalendarDays, Wallet, Clock, Plane, ChevronRight, Loader2, Trash2,
 } from 'lucide-react';
 import type { FinalItinerary, ItinerarySummary, RunningTask } from '../types';
-import { fetchTasks, fetchResult } from '../api';
+import { fetchTasks, fetchResult, deleteTask } from '../api';
 
 interface HistoryViewProps {
   onViewItem: (r: FinalItinerary) => void;
@@ -17,6 +17,7 @@ export function HistoryView({ onViewItem, runningTask, onResumeTask }: HistoryVi
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loadingTaskId, setLoadingTaskId] = useState<string | null>(null);
+  const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchTasks()
@@ -36,6 +37,20 @@ export function HistoryView({ onViewItem, runningTask, onResumeTask }: HistoryVi
       setLoadingTaskId(null);
     }
   }, [onViewItem]);
+
+  const handleDelete = useCallback(async (e: React.MouseEvent, taskId: string) => {
+    e.stopPropagation();
+    if (!window.confirm('确定要删除这条历史记录吗？此操作不可撤销。')) return;
+    setDeletingTaskId(taskId);
+    try {
+      await deleteTask(taskId);
+      setTasks(prev => prev.filter(t => t.task_id !== taskId));
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingTaskId(null);
+    }
+  }, []);
 
   const formatDate = (dt: string) => {
     try {
@@ -164,15 +179,29 @@ export function HistoryView({ onViewItem, runningTask, onResumeTask }: HistoryVi
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${task.status === 'done' ? 'bg-emerald-100 text-emerald-700' : 'bg-surface-container-high text-outline'}`}>
                       {task.status === 'done' ? '已完成' : task.status}
                     </span>
-                    <div className="flex items-center gap-1 text-primary text-xs font-semibold group-hover:gap-2 transition-all">
-                      {loadingTaskId === task.task_id ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <>
-                          <span>查看行程</span>
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </>
-                      )}
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={(e) => handleDelete(e, task.task_id)}
+                        disabled={deletingTaskId === task.task_id}
+                        className="p-1 rounded-lg text-on-surface-variant/40 hover:text-red-500 hover:bg-red-50 transition-all duration-200 disabled:opacity-50"
+                        title="删除记录"
+                      >
+                        {deletingTaskId === task.task_id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                      <div className="flex items-center gap-1 text-primary text-xs font-semibold group-hover:gap-2 transition-all">
+                        {loadingTaskId === task.task_id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <>
+                            <span>查看行程</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>

@@ -112,7 +112,7 @@ async def search_flights(
         )
         return data
     except Exception as exc:
-        logger.warning("SerpAPI flight search failed: %s", exc)
+        logger.warning("SerpAPI flight search failed [%s]: %s", type(exc).__name__, exc)
         return {}
 
 
@@ -123,6 +123,9 @@ async def search_hotels(
     adults: int = 1,
     currency: str = "CNY",
 ) -> dict[str, Any]:
+    if not city or not city.strip():
+        logger.warning("SerpAPI search_hotels skipped: empty city")
+        return {}
     settings = get_settings()
     if not settings.serpapi_enabled or not settings.serpapi_key:
         logger.info("SerpAPI disabled or no key — skipping hotel search")
@@ -152,7 +155,7 @@ async def search_hotels(
         )
         return data
     except Exception as exc:
-        logger.warning("SerpAPI hotel search failed: %s", exc)
+        logger.warning("SerpAPI hotel search failed [%s]: %s", type(exc).__name__, exc)
         return {}
 
 

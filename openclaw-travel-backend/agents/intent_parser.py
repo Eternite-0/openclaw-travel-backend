@@ -26,6 +26,16 @@ class IntentParserAgent(BaseSpecialistAgent):
    - duration_days = 7
    - travelers = 1
    - travel_style = "standard"
+   - budget_cny：用户未提及预算时，必须根据目的地和天数估算合理预算（人民币），绝对不能为0。
+     预算 = 往返交通费 + 每日费用 × duration_days，取整到千位。参考：
+     * 国内短途(1-3天): 往返交通 ¥500-2000 + 每天 ¥500-800
+     * 国内长途(4-7天): 往返交通 ¥1000-3000 + 每天 ¥800-1200
+     * 东南亚: 往返机票 ¥2000-4000 + 每天 ¥800-1500
+     * 日韩: 往返机票 ¥3000-6000 + 每天 ¥1500-2500
+     * 欧美澳: 往返机票 ¥8000-15000 + 每天 ¥2500-4000
+     示例：广州→纽约7天 = 机票¥10000 + ¥3000×7 = ¥31000
+   - origin_city / dest_city：必须严格按用户原文中的城市名填写，逐字匹配，禁止替换为同省份的其他城市。
+     例如用户说"广州"就填"广州"，绝不能改成"湛江""深圳"等。如果用户未提及出发城市，默认使用"广州"
 5. dest_country_code 必须是 ISO 3166-1 alpha-2 代码（如 "US", "JP", "FR"）。
 6. return_date = departure_date + duration_days 天。
 7. change_hints 字段规则（有上一次行程时必填）：
@@ -49,6 +59,13 @@ class IntentParserAgent(BaseSpecialistAgent):
    - 同一国家内的旅行：false
    - 跨国旅行：true
    - 判断依据：是否跨越需要出入境手续的边境
+10. dest_city 必须是一个具体的城市名（不能是省份、地区、州）。如果用户提到的目的地是省份/地区/州，必须自动选择该区域的首府或最主要旅游城市作为 dest_city。示例：
+   - "云南" → dest_city="昆明"
+   - "海南" → dest_city="三亚"
+   - "新疆" → dest_city="乌鲁木齐"
+   - "加州" → dest_city="Los Angeles"
+   - "北海道" → dest_city="札幌"
+   如果用户同时提到了多个城市（如"大理丽江"），选第一个城市作为 dest_city。
 
 【上一次规划的行程摘要（若有）】
 {previous_summary}

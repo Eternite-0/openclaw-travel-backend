@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  Share, MapPin, Sun, ThumbsUp, Train, Hotel, Clock, Wallet,
+  Share, Sun, ThumbsUp, Train, Hotel, Clock, Wallet,
   Mountain, Network, User, Bot, Loader2,
   Plus, ArrowUp, X, Mic, SlidersHorizontal, ChevronDown, Check,
 } from 'lucide-react';
@@ -16,6 +16,7 @@ import {
 import type { ChatAttachmentPayload } from '../api';
 import { formatDT, buildItineraryContext, prefetchPixabayImage } from '../utils';
 import { ActivityImage } from './ActivityImage';
+import { DayRouteMap } from './DayRouteMap';
 
 interface ItineraryViewProps {
   itinerary: FinalItinerary | null;
@@ -310,7 +311,7 @@ export function ItineraryView({
 
           {/* Right Widgets */}
           <div className="col-span-4 space-y-6">
-            <MapWidget destCity={destCity} />
+            <DayRouteMap activities={currentDay?.activities ?? []} dayNumber={activeDay} />
             <WeatherWidget destCity={destCity} activeDay={activeDay} currentWeather={currentWeather} />
             <RecommendationsWidget itinerary={itinerary} />
           </div>
@@ -530,35 +531,6 @@ function ScheduleCard({ scheduleKey, currentDay, destCity, destCountry, activeDa
         )}
       </div>
     </motion.section>
-  );
-}
-
-function MapWidget({ destCity }: { destCity: string }) {
-  return (
-    <div className="bg-gradient-to-br from-teal-50 to-emerald-100 rounded-xl overflow-hidden aspect-[16/10] relative shadow-[0_8px_32px_rgba(87,94,112,0.04)] ring-1 ring-outline-variant/10">
-      <div className="absolute inset-0 opacity-20 pointer-events-none">
-        <svg fill="none" height="100%" viewBox="0 0 400 250" width="100%" xmlns="http://www.w3.org/2000/svg">
-          <path d="M-20 80 Q 80 60 180 100 T 380 70" stroke="#059669" strokeWidth="1"></path>
-          <path d="M-20 140 Q 100 120 220 160 T 420 130" stroke="#059669" strokeWidth="1"></path>
-          <path d="M120 -20 Q 100 80 140 180 T 110 380" stroke="#059669" strokeWidth="1"></path>
-          <path d="M280 -20 Q 260 100 300 200 T 270 400" stroke="#059669" strokeWidth="1"></path>
-        </svg>
-      </div>
-      <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 400 250">
-        <path d="M80 220 C 120 180, 160 150, 200 125" fill="none" opacity="0.4" stroke="#0f766e" strokeDasharray="6,4" strokeWidth="2"></path>
-      </svg>
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
-        <MapPin className="w-8 h-8 text-red-500 drop-shadow-md fill-red-500" />
-        <span className="bg-white/95 backdrop-blur px-2.5 py-0.5 rounded-full text-[10px] font-bold shadow-sm mt-1 text-slate-800">{destCity}</span>
-      </div>
-      <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur-md px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-2">
-        <div className="relative flex h-2 w-2">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-        </div>
-        <span className="text-[11px] font-bold text-slate-700 tracking-tight">目的地：{destCity}</span>
-      </div>
-    </div>
   );
 }
 

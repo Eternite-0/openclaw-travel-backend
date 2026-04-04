@@ -94,6 +94,19 @@ class StatusStore:
         }
         await self._save(task_id, data)
 
+    async def remove_agent(self, task_id: str, agent_name: str) -> None:
+        """Remove an agent from the task status so it won't be shown in frontend."""
+        data = await self._load(task_id)
+        if data is None:
+            return
+        data["agents"] = [a for a in data["agents"] if a["agent_name"] != agent_name]
+        # Recalculate progress
+        total = len(data["agents"])
+        done_count = sum(1 for a in data["agents"] if a["status"] == "done")
+        data["progress_pct"] = int((done_count / total) * 100) if total else 0
+        data["updated_at"] = datetime.utcnow().isoformat()
+        await self._save(task_id, data)
+
     async def update_agent(
         self,
         task_id: str,

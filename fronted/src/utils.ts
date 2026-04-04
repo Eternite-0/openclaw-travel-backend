@@ -1,12 +1,13 @@
 import type { AgentStatus, FinalItinerary } from './types';
-import { AGENT_PLACEHOLDERS, PIXABAY_CAT } from './constants';
+import { PIXABAY_CAT } from './constants';
 
 // ── Agent normalizer ───────────────────────────────────────────────────────
 
 export function normalizeAgents(incoming: AgentStatus[] | undefined, fallback: AgentStatus[]): AgentStatus[] {
-  const source = incoming && incoming.length > 0 ? incoming : fallback;
-  const byName = new Map(source.map(a => [a.agent_name, a]));
-  return AGENT_PLACEHOLDERS.map((placeholder) => byName.get(placeholder.agent_name) ?? placeholder);
+  if (incoming && incoming.length > 0) {
+    return incoming;
+  }
+  return fallback;
 }
 
 // ── Date formatting ────────────────────────────────────────────────────────

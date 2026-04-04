@@ -58,6 +58,8 @@ export interface ItineraryActivity {
   duration_minutes: number;
   activity: string;
   location: string;
+  lat?: number | null;
+  lng?: number | null;
   category: string;
   estimated_cost_cny: number;
   tips: string;

@@ -1,13 +1,22 @@
 import { useState, useEffect, useMemo } from 'react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Network, CheckCircle2, XCircle, CircleDashed, Loader2, Clock, X,
+  Sparkles, Cpu,
 } from 'lucide-react';
 import type { AgentStatus, FinalItinerary } from '../types';
-import { AGENT_PLACEHOLDERS, AGENT_STYLE } from '../constants';
+import { AGENT_STYLE } from '../constants';
 import { normalizeAgents } from '../utils';
 import { pollStatus, fetchResult } from '../api';
 import { AnimatedAgentMessage } from './AnimatedAgentMessage';
+
+/* ── Launching overlay phrases ─────────────────────────────────────────────── */
+const LAUNCH_PHRASES = [
+  '正在为您策划专属行程...',
+  '正在启动智能体集群...',
+  '连接旅行数据源...',
+  '初始化多 Agent 协同系统...',
+];
 
 interface ProcessingViewProps {
   taskId: string;
@@ -16,11 +25,37 @@ interface ProcessingViewProps {
 }
 
 export function ProcessingView({ taskId, onComplete, onCancel }: ProcessingViewProps) {
-  const [agents, setAgents] = useState<AgentStatus[]>(AGENT_PLACEHOLDERS);
+  const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [overallStatus, setOverallStatus] = useState<string>('pending');
   const [progressPct, setProgressPct] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
+
+  /* ── Launch animation state ──────────────────────────────────────────────── */
+  const [phase, setPhase] = useState<'launching' | 'agents'>('launching');
+  const [launchIdx, setLaunchIdx] = useState(0);
+
+  // Cycle through launch phrases
+  useEffect(() => {
+    if (phase !== 'launching') return;
+    const iv = setInterval(() => setLaunchIdx(i => (i + 1) % LAUNCH_PHRASES.length), 1200);
+    return () => clearInterval(iv);
+  }, [phase]);
+
+  // Transition from launching → agents after first real data arrives or timeout
+  useEffect(() => {
+    if (phase !== 'launching') return;
+    // Auto-transition after 2.5s minimum launch time
+    const timer = setTimeout(() => setPhase('agents'), 2500);
+    return () => clearTimeout(timer);
+  }, [phase]);
+
+  // Also transition when first agent data arrives (but still respect minimum delay)
+  useEffect(() => {
+    if (phase === 'launching' && agents.length > 0 && elapsedSec >= 2) {
+      setPhase('agents');
+    }
+  }, [agents, elapsedSec, phase]);
 
   useEffect(() => {
     const t0 = Date.now();
@@ -69,12 +104,93 @@ export function ProcessingView({ taskId, onComplete, onCancel }: ProcessingViewP
   const doneCount = useMemo(() => agents.filter(a => a.status === 'done').length, [agents]);
   const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
+  /* ── Launching overlay ───────────────────────────────────────────────────── */
+  if (phase === 'launching') {
+    return (
+      <motion.main
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="ml-[220px] pt-16 min-h-screen bg-surface-container-lowest flex flex-col items-center justify-center relative overflow-hidden"
+      >
+        {/* Blurred background effect */}
+        <div className="absolute inset-0 backdrop-blur-sm bg-white/60" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(var(--md-sys-color-primary-rgb,16,109,32),0.06)_0%,transparent_70%)]" />
+
+        <motion.div
+          initial={{ opacity: 0, y: 30, scale: 0.9 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+          className="relative z-10 flex flex-col items-center gap-6"
+        >
+          {/* Animated icon cluster */}
+          <div className="relative w-20 h-20">
+            <motion.div
+              className="absolute inset-0 bg-primary/10 rounded-full"
+              animate={{ scale: [1, 1.4, 1], opacity: [0.4, 0, 0.4] }}
+              transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <motion.div
+              className="absolute inset-0 bg-primary/8 rounded-full"
+              animate={{ scale: [1, 1.6, 1], opacity: [0.3, 0, 0.3] }}
+              transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut', delay: 0.3 }}
+            />
+            <div className="w-20 h-20 bg-white rounded-2xl shadow-lg border border-outline-variant/20 flex items-center justify-center relative z-10">
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 3, repeat: Infinity, ease: 'linear' }}
+              >
+                <Cpu className="w-8 h-8 text-primary" />
+              </motion.div>
+            </div>
+            <motion.div
+              className="absolute -top-1 -right-1 w-6 h-6 bg-amber-50 rounded-full flex items-center justify-center border border-amber-200/50 z-20"
+              animate={{ scale: [0.8, 1.1, 0.8] }}
+              transition={{ duration: 1.5, repeat: Infinity }}
+            >
+              <Sparkles className="w-3 h-3 text-amber-500" />
+            </motion.div>
+          </div>
+
+          {/* Cycling text */}
+          <div className="text-center min-h-[52px] flex flex-col items-center justify-center">
+            <AnimatePresence mode="wait">
+              <motion.p
+                key={launchIdx}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.3 }}
+                className="text-base font-semibold text-on-surface"
+              >
+                {LAUNCH_PHRASES[launchIdx]}
+              </motion.p>
+            </AnimatePresence>
+            <p className="text-xs text-on-surface-variant mt-1.5">OpenClaw 多智能体系统</p>
+          </div>
+
+          {/* Subtle loading bar */}
+          <div className="w-48 h-1 bg-surface-container-high rounded-full overflow-hidden">
+            <motion.div
+              className="h-full bg-gradient-to-r from-primary/60 via-primary to-primary/60 rounded-full"
+              initial={{ x: '-100%' }}
+              animate={{ x: '100%' }}
+              transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
+              style={{ width: '60%' }}
+            />
+          </div>
+        </motion.div>
+      </motion.main>
+    );
+  }
+
+  /* ── Agent collaboration view ────────────────────────────────────────────── */
   return (
     <motion.main
-      initial={{ opacity: 0, scale: 0.98 }}
-      animate={{ opacity: 1, scale: 1 }}
+      initial={{ opacity: 0, scale: 0.95, y: 20 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 1.02 }}
-      transition={{ duration: 0.5, ease: "easeInOut" }}
+      transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
       className="ml-[220px] pt-16 min-h-screen bg-surface-container-lowest flex flex-col items-center justify-center relative overflow-hidden"
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle,#e2e8f0_1px,transparent_1px)] [background-size:40px_40px] opacity-40 pointer-events-none" />

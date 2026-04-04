@@ -82,6 +82,8 @@ class Attraction(BaseModel):
     name_zh: str
     category: Literal["landmark", "museum", "nature", "entertainment", "food"]
     address: str
+    lat: Optional[float] = None
+    lng: Optional[float] = None
     opening_hours: str
     entry_fee_cny: float
     recommended_duration_hours: float
@@ -123,6 +125,8 @@ class ItineraryActivity(BaseModel):
     duration_minutes: int
     activity: str
     location: str
+    lat: Optional[float] = None
+    lng: Optional[float] = None
     category: str
     estimated_cost_cny: float
     tips: str
