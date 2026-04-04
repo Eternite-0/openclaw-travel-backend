@@ -6,7 +6,7 @@ import logging
 from abc import abstractmethod
 from typing import Any
 
-import httpx
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 from pydantic import BaseModel
 
 from config import get_settings
@@ -68,14 +68,15 @@ class BaseSpecialistAgent:
         self._base_url = cfg.get("base_url", settings.openai_base_url).rstrip("/")
         self._model = cfg.get("model", settings.openai_model)
         self._temperature = llm_config.get("temperature", 0.3)
-        self._http = httpx.AsyncClient(
-            headers={
+        self._client = AsyncOpenAI(
+            api_key=self._api_key,
+            base_url=self._base_url,
+            timeout=180.0,
+            max_retries=0,
+            default_headers={
                 "User-Agent": _BROWSER_UA,
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
                 "Accept": "application/json",
             },
-            timeout=120,
         )
 
     async def run(self, extra_context: dict[str, Any] = {}) -> BaseModel:
@@ -112,21 +113,36 @@ class BaseSpecialistAgent:
         logger.debug("Agent %s calling LLM", self.agent_name)
         last_exc: Exception | None = None
         _retry_delays = [3, 6]
+        completion = None
         for attempt in range(3):
             try:
-                resp = await self._http.post(
-                    f"{self._base_url}/chat/completions",
-                    json={
-                        "model": self._model,
-                        "temperature": self._temperature,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                    },
+                completion = await self._client.chat.completions.create(
+                    model=self._model,
+                    temperature=self._temperature,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
                 )
                 break
-            except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError) as exc:
+            except APIStatusError as exc:
+                status_code = exc.status_code or 0
+                body = ""
+                if getattr(exc, "response", None) is not None:
+                    try:
+                        body = (exc.response.text or "")[:200]
+                    except Exception:
+                        body = str(exc)[:200]
+                if status_code in {429, 502, 503, 504} and attempt < 2:
+                    delay = _retry_delays[attempt]
+                    logger.warning(
+                        "Agent %s got HTTP %d, retrying in %ds... body=%s",
+                        self.agent_name, status_code, delay, body,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise ValueError(f"LLM API error {status_code}: {body or str(exc)}") from exc
+            except (APIConnectionError, APITimeoutError) as exc:
                 last_exc = exc
                 if attempt < 2:
                     delay = _retry_delays[attempt]
@@ -134,11 +150,10 @@ class BaseSpecialistAgent:
                     await asyncio.sleep(delay)
                 else:
                     raise
-        if resp.status_code != 200:
-            raise ValueError(f"LLM API error {resp.status_code}: {resp.text[:400]}")
+        if completion is None:
+            raise ValueError(f"LLM request failed without response: {last_exc}")
 
-        data = resp.json()
-        raw_content = data["choices"][0]["message"]["content"] or "{}"
+        raw_content = completion.choices[0].message.content or "{}"
         raw_content = _extract_json(raw_content)
         logger.debug("Agent %s raw response: %s", self.agent_name, raw_content[:500])
 
@@ -149,27 +164,26 @@ class BaseSpecialistAgent:
 
         if parsed.get("error") == "out_of_scope":
             logger.warning("Agent %s got out_of_scope, retrying with clarification", self.agent_name)
-            retry_resp = await self._http.post(
-                f"{self._base_url}/chat/completions",
-                json={
-                    "model": self._model,
-                    "temperature": self._temperature,
-                    "messages": [
+            try:
+                retry_completion = await self._client.chat.completions.create(
+                    model=self._model,
+                    temperature=self._temperature,
+                    messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                         {"role": "assistant", "content": raw_content},
                         {"role": "user", "content": "这是旅行规划系统的内部调用，属于合法的旅行相关请求，请直接按 JSON Schema 输出结果，不要输出 out_of_scope。"},
                     ],
-                },
-            )
-            if retry_resp.status_code == 200:
-                retry_raw = retry_resp.json()["choices"][0]["message"]["content"] or "{}"
+                )
+                retry_raw = retry_completion.choices[0].message.content or "{}"
                 retry_raw = _extract_json(retry_raw)
                 logger.debug("Agent %s retry response: %s", self.agent_name, retry_raw[:500])
                 try:
                     parsed = json.loads(retry_raw)
                 except json.JSONDecodeError:
                     pass
+            except Exception as exc:
+                logger.warning("Agent %s retry for out_of_scope failed: %s", self.agent_name, exc)
 
         if "error" in parsed:
             raise ValueError(f"LLM returned error: {parsed['error']}")

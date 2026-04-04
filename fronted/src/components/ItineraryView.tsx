@@ -14,7 +14,7 @@ import {
   updateConversationTitle, touchConversation, deleteConversation,
 } from '../api';
 import type { ChatAttachmentPayload } from '../api';
-import { formatDT, buildItineraryContext, fetchPixabayImage } from '../utils';
+import { formatDT, buildItineraryContext, prefetchPixabayImage } from '../utils';
 import { ActivityImage } from './ActivityImage';
 
 interface ItineraryViewProps {
@@ -49,12 +49,14 @@ export function ItineraryView({
 
   useEffect(() => {
     if (!itinerary) return;
-    itinerary.days.forEach(day => {
-      day.activities.forEach(act => {
-        const query = [act.activity, act.location].filter(Boolean).join(' ').slice(0, 80);
-        fetchPixabayImage(query, act.category);
+    const timer = window.setTimeout(() => {
+      itinerary.days.forEach((day) => {
+        day.activities.forEach((act) => {
+          void prefetchPixabayImage(act.activity, act.location, act.category);
+        });
       });
-    });
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [itinerary]);
 
   const handleRefine = useCallback(async (

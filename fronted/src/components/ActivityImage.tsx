@@ -1,5 +1,5 @@
 import { useState, useEffect, memo } from 'react';
-import { imgCache, loadedCache, fetchPixabayImage, picsumFallback } from '../utils';
+import { imgCache, loadedCache, buildImageCacheKey, prefetchPixabayImage, picsumFallback } from '../utils';
 
 interface ActivityImageProps {
   activity: string;
@@ -12,15 +12,19 @@ interface ActivityImageProps {
 export const ActivityImage = memo(function ActivityImage({
   activity, location, category, destCountry, sig,
 }: ActivityImageProps) {
-  const cacheKey = `${[activity, location].filter(Boolean).join(' ').slice(0, 80)}::${category}`;
+  const cacheKey = buildImageCacheKey(activity, location, category);
   const fallback = picsumFallback(`${destCountry}-${category}-${sig}`);
   const [src, setSrc] = useState<string>(() => imgCache.get(cacheKey) ?? fallback);
   const [loaded, setLoaded] = useState<boolean>(() => loadedCache.get(cacheKey) ?? false);
 
   useEffect(() => {
-    if (imgCache.has(cacheKey)) { setSrc(imgCache.get(cacheKey)!); return; }
-    const query = [activity, location].filter(Boolean).join(' ').slice(0, 80);
-    fetchPixabayImage(query, category).then(url => { if (url) setSrc(url); });
+    let cancelled = false;
+    prefetchPixabayImage(activity, location, category).then((url) => {
+      if (cancelled || !url) return;
+      setSrc(url);
+      setLoaded(loadedCache.get(cacheKey) ?? false);
+    });
+    return () => { cancelled = true; };
   }, [activity, location, category, cacheKey]);
 
   return (

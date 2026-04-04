@@ -6,8 +6,8 @@ import logging
 from typing import Any, Optional
 from uuid import uuid4
 
-import httpx
 from fastapi import APIRouter, Request
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 
 from agents.orchestrator import ALL_AGENT_NAMES, run_travel_pipeline
 from config import get_settings
@@ -167,38 +167,51 @@ async def _call_llm(
     base_url = cfg.get("base_url", settings.openai_base_url).rstrip("/")
     model = cfg.get("model", settings.openai_model)
 
+    client = AsyncOpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        timeout=30.0,
+        max_retries=0,
+    )
     try:
         payload_messages = messages or [{"role": "user", "content": prompt or ""}]
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "%s/chat/completions" % base_url,
-                headers={
-                    "Authorization": "Bearer %s" % api_key,
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                    "messages": payload_messages,
-                },
-            )
-        if resp.status_code != 200:
-            logger.warning("LLM returned status %s", resp.status_code)
-            return None
-        content = resp.json()["choices"][0]["message"]["content"]
-        if isinstance(content, str):
-            return content.strip()
-        if isinstance(content, list):
-            chunks = []
-            for part in content:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    chunks.append(part.get("text", ""))
-            return "\n".join([c for c in chunks if c]).strip()
-        return str(content).strip()
+        for attempt in range(2):
+            try:
+                completion = await client.chat.completions.create(
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    messages=payload_messages,  # type: ignore[arg-type]
+                )
+                content = completion.choices[0].message.content
+                if isinstance(content, str):
+                    return content.strip()
+                if isinstance(content, list):
+                    chunks = []
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            chunks.append(part.get("text", ""))
+                    return "\n".join([c for c in chunks if c]).strip()
+                return str(content).strip()
+            except APIStatusError as exc:
+                status_code = exc.status_code or 0
+                if status_code in {429, 502, 503, 504} and attempt == 0:
+                    await asyncio.sleep(1.5)
+                    continue
+                logger.warning("LLM returned status %s", status_code)
+                return None
+            except (APIConnectionError, APITimeoutError) as exc:
+                if attempt == 0:
+                    await asyncio.sleep(1.5)
+                    continue
+                logger.warning("LLM call failed: %s", exc)
+                return None
+        return None
     except Exception as exc:
         logger.warning("LLM call failed: %s", exc)
         return None
+    finally:
+        await client.close()
 
 
 def _format_history(messages: list[dict]) -> str:

@@ -43,23 +43,77 @@ export function buildItineraryContext(it: FinalItinerary): string {
 const PIXABAY_KEY = import.meta.env.VITE_PIXABAY_KEY ?? '55288051-01a1c9c852b808f3a1100bfa5';
 export const imgCache = new Map<string, string>();
 export const loadedCache = new Map<string, boolean>();
+const requestCache = new Map<string, Promise<string | null>>();
+const preloadCache = new Map<string, Promise<void>>();
+
+export function buildImageQuery(activity: string, location: string): string {
+  return [activity, location].filter(Boolean).join(' ').slice(0, 80);
+}
+
+export function buildImageCacheKey(activity: string, location: string, category: string): string {
+  return `${buildImageQuery(activity, location)}::${category}`;
+}
 
 export async function fetchPixabayImage(query: string, category: string): Promise<string | null> {
   const cacheKey = `${query}::${category}`;
   if (imgCache.has(cacheKey)) return imgCache.get(cacheKey)!;
+  if (requestCache.has(cacheKey)) return requestCache.get(cacheKey)!;
+
+  const pending = (async () => {
+    try {
+      const cat = PIXABAY_CAT[category] ?? 'travel';
+      const url = `https://pixabay.com/api/?key=${PIXABAY_KEY}&q=${encodeURIComponent(query)}&image_type=photo&category=${cat}&per_page=5&safesearch=true&order=popular`;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data.hits?.length > 0) {
+        const imgUrl: string = data.hits[Math.floor(Math.random() * Math.min(data.hits.length, 3))].webformatURL;
+        imgCache.set(cacheKey, imgUrl);
+        return imgUrl;
+      }
+    } catch {}
+    return null;
+  })();
+
+  requestCache.set(cacheKey, pending);
   try {
-    const cat = PIXABAY_CAT[category] ?? 'travel';
-    const url = `https://pixabay.com/api/?key=${PIXABAY_KEY}&q=${encodeURIComponent(query)}&image_type=photo&category=${cat}&per_page=5&safesearch=true&order=popular`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.hits?.length > 0) {
-      const imgUrl: string = data.hits[Math.floor(Math.random() * Math.min(data.hits.length, 3))].webformatURL;
-      imgCache.set(cacheKey, imgUrl);
-      return imgUrl;
+    return await pending;
+  } finally {
+    requestCache.delete(cacheKey);
+  }
+}
+
+function preloadImage(cacheKey: string, url: string): Promise<void> {
+  if (loadedCache.get(cacheKey)) return Promise.resolve();
+  const preloadKey = `${cacheKey}::${url}`;
+  if (preloadCache.has(preloadKey)) return preloadCache.get(preloadKey)!;
+
+  const pending = new Promise<void>((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      loadedCache.set(cacheKey, true);
+      resolve();
+    };
+    image.onerror = () => resolve();
+    image.src = url;
+    if (image.complete) {
+      loadedCache.set(cacheKey, true);
+      resolve();
     }
-  } catch {}
-  return null;
+  });
+
+  preloadCache.set(preloadKey, pending);
+  pending.finally(() => preloadCache.delete(preloadKey));
+  return pending;
+}
+
+export async function prefetchPixabayImage(activity: string, location: string, category: string): Promise<string | null> {
+  const query = buildImageQuery(activity, location);
+  const cacheKey = `${query}::${category}`;
+  const url = await fetchPixabayImage(query, category);
+  if (!url) return null;
+  await preloadImage(cacheKey, url);
+  return url;
 }
 
 export function picsumFallback(seed: string) {
