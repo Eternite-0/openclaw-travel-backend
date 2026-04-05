@@ -164,7 +164,7 @@ export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapPro
   ];
 
   return (
-    <div className="rounded-xl overflow-hidden aspect-[16/10] shadow-[0_8px_32px_rgba(87,94,112,0.04)] ring-1 ring-outline-variant/10 relative">
+    <div className="rounded-xl overflow-hidden aspect-[16/10] shadow-[0_8px_32px_rgba(87,94,112,0.04)] ring-1 ring-outline-variant/10 relative isolate">
       {/* Day badge */}
       <div className="absolute top-3 left-3 z-[1000] bg-white/90 backdrop-blur-md px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-2">
         <div className="relative flex h-2 w-2">
