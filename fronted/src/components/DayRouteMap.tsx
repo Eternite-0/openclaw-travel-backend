@@ -106,6 +106,7 @@ export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapPro
   /* ── Walking route segments from Gaode API ─────────────────────────── */
   const [routeSegments, setRouteSegments] = useState<[number, number][][] | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
+  const [routeFailed, setRouteFailed] = useState(false);
 
   const positionsKey = useMemo(
     () => points.map((p) => `${p.lat},${p.lng}`).join('|'),
@@ -115,9 +116,11 @@ export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapPro
   const loadWalkingRoute = useCallback(async () => {
     if (points.length < 2 || isHikingRoute) {
       setRouteSegments(null);
+      setRouteFailed(false);
       return;
     }
     setRouteLoading(true);
+    setRouteFailed(false);
     try {
       const resp = await fetchWalkingRoute(
         points.map((p) => ({
@@ -128,13 +131,16 @@ export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapPro
           city,
         })),
       );
-      if (resp.ok && resp.segments.length > 0) {
-        setRouteSegments(resp.segments.filter((seg) => Array.isArray(seg) && seg.length > 1));
+      const validSegments = (resp.segments || []).filter((seg) => Array.isArray(seg) && seg.length > 1);
+      if (resp.ok && validSegments.length > 0) {
+        setRouteSegments(validSegments);
       } else {
         setRouteSegments(null);
+        setRouteFailed(true);
       }
     } catch {
       setRouteSegments(null);
+      setRouteFailed(true);
     } finally {
       setRouteLoading(false);
     }
@@ -168,6 +174,7 @@ export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapPro
         <span className="text-[11px] font-bold text-slate-700 tracking-tight">
           第{dayNumber}天路线 · {points.length}个地点
           {routeLoading && ' · 加载路径...'}
+          {!routeLoading && routeFailed && !isHikingRoute && ' · 路网规划失败'}
         </span>
       </div>
 
@@ -200,7 +207,7 @@ export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapPro
                 }}
               />
             ))
-          : (
+          : isHikingRoute ? (
               <Polyline
                 positions={positions}
                 pathOptions={{
@@ -211,7 +218,7 @@ export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapPro
                   lineJoin: 'round',
                 }}
               />
-            )
+            ) : null
         }
 
         {/* Markers: hiking → no cluster (keep aligned with polyline); city → cluster */}

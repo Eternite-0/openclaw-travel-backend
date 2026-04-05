@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -24,6 +25,8 @@ _TOTAL_DAILY_LIMIT = _SMART_DAILY_LIMIT + _WEB_DAILY_LIMIT
 _quota_state: dict[str, dict[str, Any]] = {}
 _task_key_map: dict[str, str] = {}
 _rr_index = 0
+_key_last_request_ts: dict[str, float] = {}
+_MIN_REQUEST_GAP_SEC = 0.45
 
 
 def _cn_today() -> str:
@@ -80,6 +83,13 @@ async def _select_key_for_task(task_id: str = "") -> Optional[str]:
         if task_id:
             _task_key_map[task_id] = chosen
         return chosen
+
+
+async def _bind_task_key(task_id: str, api_key: str) -> None:
+    if not task_id:
+        return
+    async with _state_lock:
+        _task_key_map[task_id] = api_key
 
 
 def _quota_snapshot(api_key: str) -> tuple[int, int, int]:
@@ -145,11 +155,53 @@ async def _consume_slot_on_success(api_key: str, slot: str) -> None:
             return
 
 
+async def _throttle_key_request(api_key: str) -> None:
+    while True:
+        wait_s = 0.0
+        async with _state_lock:
+            now = time.monotonic()
+            last = _key_last_request_ts.get(api_key, 0.0)
+            gap = _MIN_REQUEST_GAP_SEC - (now - last)
+            if gap <= 0:
+                _key_last_request_ts[api_key] = now
+                return
+            wait_s = gap
+        await asyncio.sleep(wait_s)
+
+
+def _is_qps_limit_response(resp: httpx.Response) -> bool:
+    if resp.status_code != 429:
+        return False
+    try:
+        data = resp.json()
+        code = str(data.get("code", "")).upper()
+        if "RATE_LIMIT" in code or "QPS" in code:
+            return True
+    except Exception:
+        pass
+    txt = (resp.text or "").upper()
+    return "QPS" in txt or "RATE_LIMIT" in txt
+
+
+def _is_qps_limit_error(exc: httpx.HTTPStatusError) -> bool:
+    resp = exc.response
+    if resp is None:
+        return False
+    return _is_qps_limit_response(resp)
+
+
 async def _post_with_auth_variants(url: str, payload: dict[str, Any], api_key: str) -> httpx.Response:
     client = _get_client()
-    resp = await client.post(url, headers=_auth_headers(api_key), json=payload)
-    if resp.status_code in {401, 403}:
-        resp = await client.post(url, headers=_alt_auth_headers(api_key), json=payload)
+    for attempt in range(3):
+        await _throttle_key_request(api_key)
+        resp = await client.post(url, headers=_auth_headers(api_key), json=payload)
+        if resp.status_code in {401, 403}:
+            await _throttle_key_request(api_key)
+            resp = await client.post(url, headers=_alt_auth_headers(api_key), json=payload)
+        if _is_qps_limit_response(resp) and attempt < 2:
+            await asyncio.sleep(0.6 * (attempt + 1))
+            continue
+        return resp
     return resp
 
 
@@ -221,11 +273,23 @@ async def search_with_fallback(
     if not settings.baidu_ai_search_enabled:
         return ""
 
+    all_keys = _get_api_keys()
     api_key = await _select_key_for_task(task_id=task_id)
     if not api_key:
         return ""
 
     slot = await _pick_slot(api_key, prefer_web=prefer_web)
+    if slot is None:
+        # 当前任务绑定 key 额度不足，尝试切换到其它 key
+        for alt_key in all_keys:
+            if alt_key == api_key:
+                continue
+            alt_slot = await _pick_slot(alt_key, prefer_web=prefer_web)
+            if alt_slot is not None:
+                api_key = alt_key
+                slot = alt_slot
+                await _bind_task_key(task_id, api_key)
+                break
     if slot is None:
         smart_left, web_left, total_left = _quota_snapshot(api_key)
         logger.info(
@@ -234,43 +298,50 @@ async def search_with_fallback(
         )
         return ""
 
-    async def _run_once(current_slot: str) -> str:
+    key_order = [api_key] + [k for k in all_keys if k != api_key]
+
+    async def _run_once(current_slot: str, current_key: str) -> str:
         if current_slot == "web":
-            data = await _call_web_search(api_key, query)
+            data = await _call_web_search(current_key, query)
             return _format_references_block(data, f"{label_prefix}（百度搜索）")
-        data = await _call_smart_search(api_key, query)
+        data = await _call_smart_search(current_key, query)
         return _format_references_block(
             data,
             f"{label_prefix}（百度智能搜索生成）",
             ai_answer=_extract_ai_answer(data),
         )
 
-    try:
-        result = await _run_once(slot)
-        await _consume_slot_on_success(api_key, slot)
+    async def _try_slot_with_keys(current_slot: str) -> str:
+        for key in key_order:
+            if not await _can_use_slot(key, current_slot):
+                continue
+            try:
+                result = await _run_once(current_slot, key)
+                await _consume_slot_on_success(key, current_slot)
+                await _bind_task_key(task_id, key)
+                return result
+            except httpx.HTTPStatusError as exc:
+                body = ""
+                try:
+                    body = (exc.response.text or "")[:500]
+                except Exception:
+                    body = ""
+                logger.warning(
+                    "Baidu %s failed key_tail=%s query='%s' status=%s body=%s",
+                    current_slot, key[-8:], query[:70], exc.response.status_code if exc.response is not None else "unknown", body,
+                )
+                if _is_qps_limit_error(exc):
+                    continue
+            except Exception as exc:
+                logger.warning("Baidu %s failed key_tail=%s query='%s': %r", current_slot, key[-8:], query[:70], exc)
+        return ""
+
+    result = await _try_slot_with_keys(slot)
+    if result:
         return result
-    except httpx.HTTPStatusError as exc:
-        body = ""
-        try:
-            body = (exc.response.text or "")[:500]
-        except Exception:
-            body = ""
-        logger.warning(
-            "Baidu %s failed key_tail=%s query='%s' status=%s body=%s",
-            slot, api_key[-8:], query[:70], exc.response.status_code if exc.response is not None else "unknown", body,
-        )
-    except Exception as exc:
-        logger.warning("Baidu %s failed key_tail=%s query='%s': %r", slot, api_key[-8:], query[:70], exc)
 
     alt_slot = "smart" if slot == "web" else "web"
-    if await _can_use_slot(api_key, alt_slot):
-        try:
-            result = await _run_once(alt_slot)
-            await _consume_slot_on_success(api_key, alt_slot)
-            return result
-        except Exception as exc:
-            logger.warning("Baidu %s fallback failed key_tail=%s query='%s': %r", alt_slot, api_key[-8:], query[:70], exc)
-    return ""
+    return await _try_slot_with_keys(alt_slot)
 
 
 async def search_hotels(city: str, check_in: str, check_out: str, task_id: str = "") -> str:

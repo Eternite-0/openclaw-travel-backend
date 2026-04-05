@@ -108,15 +108,13 @@ async def _normalize_waypoint(point: dict) -> dict:
     if not best:
         return point
 
-    # 防止歧义地址把点拉到太远的位置
-    if best_dist > 30000:
+    # 高德主导坐标：命中即覆盖。保留距离日志，便于回归评估。
+    if best_dist > 5000:
         logger.warning(
-            "AMap waypoint geocode ignored (too far): %.0fm, name=%s, location=%s",
+            "AMap waypoint corrected with large shift: %.0fm, name=%s, location=%s",
             best_dist, name[:30], location[:30],
         )
-        return point
-
-    if best_dist > 120:
+    elif best_dist > 120:
         logger.info(
             "AMap waypoint corrected: %.0fm shift, name=%s, location=%s",
             best_dist, name[:30], location[:30],
