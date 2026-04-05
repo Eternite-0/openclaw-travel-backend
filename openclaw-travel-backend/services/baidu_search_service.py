@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from datetime import datetime, timedelta
@@ -16,6 +17,7 @@ BAIDU_AI_SEARCH_URL = "https://qianfan.baidubce.com/v2/ai_search/chat/completion
 BAIDU_WEB_SEARCH_URL = "https://qianfan.baidubce.com/v2/ai_search/web_search"
 
 _http_client: httpx.AsyncClient | None = None
+_redis_client: Any | None = None
 _state_lock = asyncio.Lock()
 
 _SMART_DAILY_LIMIT = 100
@@ -27,10 +29,24 @@ _task_key_map: dict[str, str] = {}
 _rr_index = 0
 _key_last_request_ts: dict[str, float] = {}
 _MIN_REQUEST_GAP_SEC = 0.45
+_REDIS_TTL_SEC = 3 * 24 * 3600
+
+
+def set_redis_client(client: Any) -> None:
+    global _redis_client
+    _redis_client = client
 
 
 def _cn_today() -> str:
     return (datetime.utcnow() + timedelta(hours=8)).date().isoformat()
+
+
+def _key_fingerprint(api_key: str) -> str:
+    return hashlib.md5(api_key.encode("utf-8")).hexdigest()[:12]
+
+
+def _redis_state_key(api_key: str, date_str: str) -> str:
+    return f"baidu_quota:{date_str}:{_key_fingerprint(api_key)}"
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -67,6 +83,46 @@ def _ensure_key_state(api_key: str) -> None:
         _quota_state[api_key] = {"date": today, "smart_used": 0, "web_used": 0}
 
 
+async def _load_key_state_if_needed(api_key: str) -> None:
+    _ensure_key_state(api_key)
+    if _redis_client is None:
+        return
+    state = _quota_state.get(api_key) or {}
+    if state.get("_loaded_from_redis"):
+        return
+    date_str = state.get("date", _cn_today())
+    try:
+        raw = await _redis_client.hgetall(_redis_state_key(api_key, date_str))
+        if raw:
+            state["smart_used"] = int(raw.get("smart_used", state.get("smart_used", 0)))
+            state["web_used"] = int(raw.get("web_used", state.get("web_used", 0)))
+        state["_loaded_from_redis"] = True
+        _quota_state[api_key] = state
+    except Exception as exc:
+        logger.warning("Baidu quota redis read failed key_tail=%s: %s", api_key[-8:], exc)
+
+
+async def _persist_key_state(api_key: str) -> None:
+    if _redis_client is None:
+        return
+    state = _quota_state.get(api_key)
+    if not state:
+        return
+    date_str = state.get("date", _cn_today())
+    key = _redis_state_key(api_key, date_str)
+    try:
+        await _redis_client.hset(
+            key,
+            mapping={
+                "smart_used": int(state.get("smart_used", 0)),
+                "web_used": int(state.get("web_used", 0)),
+            },
+        )
+        await _redis_client.expire(key, _REDIS_TTL_SEC)
+    except Exception as exc:
+        logger.warning("Baidu quota redis write failed key_tail=%s: %s", api_key[-8:], exc)
+
+
 async def _select_key_for_task(task_id: str = "") -> Optional[str]:
     global _rr_index
     keys = _get_api_keys()
@@ -92,7 +148,8 @@ async def _bind_task_key(task_id: str, api_key: str) -> None:
         _task_key_map[task_id] = api_key
 
 
-def _quota_snapshot(api_key: str) -> tuple[int, int, int]:
+async def _quota_snapshot(api_key: str) -> tuple[int, int, int]:
+    await _load_key_state_if_needed(api_key)
     _ensure_key_state(api_key)
     state = _quota_state[api_key]
     smart_left = _SMART_DAILY_LIMIT - int(state["smart_used"])
@@ -102,6 +159,7 @@ def _quota_snapshot(api_key: str) -> tuple[int, int, int]:
 
 
 async def _pick_slot(api_key: str, prefer_web: bool = True) -> Optional[str]:
+    await _load_key_state_if_needed(api_key)
     async with _state_lock:
         _ensure_key_state(api_key)
         state = _quota_state[api_key]
@@ -124,6 +182,7 @@ async def _pick_slot(api_key: str, prefer_web: bool = True) -> Optional[str]:
 
 
 async def _can_use_slot(api_key: str, slot: str) -> bool:
+    await _load_key_state_if_needed(api_key)
     async with _state_lock:
         _ensure_key_state(api_key)
         state = _quota_state[api_key]
@@ -143,15 +202,18 @@ async def _can_use_slot(api_key: str, slot: str) -> bool:
 
 async def _consume_slot_on_success(api_key: str, slot: str) -> None:
     async with _state_lock:
+        await _load_key_state_if_needed(api_key)
         _ensure_key_state(api_key)
         state = _quota_state[api_key]
         if slot == "web":
             if int(state["web_used"]) < _WEB_DAILY_LIMIT:
                 state["web_used"] += 1
+            await _persist_key_state(api_key)
             return
         if slot == "smart":
             if int(state["smart_used"]) < _SMART_DAILY_LIMIT:
                 state["smart_used"] += 1
+            await _persist_key_state(api_key)
             return
 
 
@@ -278,26 +340,6 @@ async def search_with_fallback(
     if not api_key:
         return ""
 
-    slot = await _pick_slot(api_key, prefer_web=prefer_web)
-    if slot is None:
-        # 当前任务绑定 key 额度不足，尝试切换到其它 key
-        for alt_key in all_keys:
-            if alt_key == api_key:
-                continue
-            alt_slot = await _pick_slot(alt_key, prefer_web=prefer_web)
-            if alt_slot is not None:
-                api_key = alt_key
-                slot = alt_slot
-                await _bind_task_key(task_id, api_key)
-                break
-    if slot is None:
-        smart_left, web_left, total_left = _quota_snapshot(api_key)
-        logger.info(
-            "Baidu key quota exhausted. key_tail=%s smart_left=%d web_left=%d total_left=%d",
-            api_key[-8:], smart_left, web_left, total_left,
-        )
-        return ""
-
     key_order = [api_key] + [k for k in all_keys if k != api_key]
 
     async def _run_once(current_slot: str, current_key: str) -> str:
@@ -336,12 +378,28 @@ async def search_with_fallback(
                 logger.warning("Baidu %s failed key_tail=%s query='%s': %r", current_slot, key[-8:], query[:70], exc)
         return ""
 
-    result = await _try_slot_with_keys(slot)
-    if result:
-        return result
+    if prefer_web:
+        # 全局优先级：所有 key 的 web 都不可用/失败后，才尝试 smart
+        result = await _try_slot_with_keys("web")
+        if result:
+            return result
+        result = await _try_slot_with_keys("smart")
+        if result:
+            return result
+    else:
+        result = await _try_slot_with_keys("smart")
+        if result:
+            return result
+        result = await _try_slot_with_keys("web")
+        if result:
+            return result
 
-    alt_slot = "smart" if slot == "web" else "web"
-    return await _try_slot_with_keys(alt_slot)
+    smart_left, web_left, total_left = await _quota_snapshot(api_key)
+    logger.info(
+        "Baidu all-key search exhausted or unavailable. key_tail=%s smart_left=%d web_left=%d total_left=%d",
+        api_key[-8:], smart_left, web_left, total_left,
+    )
+    return ""
 
 
 async def search_hotels(city: str, check_in: str, check_out: str, task_id: str = "") -> str:
