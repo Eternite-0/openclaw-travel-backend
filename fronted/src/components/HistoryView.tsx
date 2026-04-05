@@ -64,11 +64,11 @@ export function HistoryView({ onViewItem, runningTask, onResumeTask }: HistoryVi
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
       transition={{ duration: 0.4, ease: 'easeOut' }}
-      className="ml-[220px] pt-16 min-h-screen bg-surface-container-lowest relative overflow-hidden"
+      className="ml-0 lg:ml-[220px] pt-16 min-h-screen bg-surface-container-lowest relative overflow-hidden"
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle,#e2e8f0_1px,transparent_1px)] [background-size:40px_40px] opacity-40 pointer-events-none" />
 
-      <div className="max-w-5xl mx-auto px-8 py-10 relative z-10">
+      <div className="max-w-5xl mx-auto px-4 md:px-8 py-6 md:py-10 relative z-10">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-1">
             <History className="w-6 h-6 text-primary" />

@@ -14,6 +14,7 @@ export default function App() {
   const [sessionId] = useState(() => crypto.randomUUID());
   const [itinerary, setItinerary] = useState<FinalItinerary | null>(null);
   const [runningTask, setRunningTask] = useState<RunningTask | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleNavigateToProcessing = useCallback((newTaskId: string, query?: string) => {
     setTaskId(newTaskId);
@@ -47,10 +48,23 @@ export default function App() {
     setItinerary(updated);
   }, []);
 
+  const handleMenuClick = useCallback(() => {
+    setSidebarOpen(true);
+  }, []);
+
+  const handleSidebarClose = useCallback(() => {
+    setSidebarOpen(false);
+  }, []);
+
   return (
     <div className="min-h-screen bg-surface text-on-surface font-sans selection:bg-primary-container selection:text-on-primary-container">
-      <Header />
-      <Sidebar currentView={currentView} onNavigate={setCurrentView} />
+      <Header onMenuClick={handleMenuClick} />
+      <Sidebar 
+        currentView={currentView} 
+        onNavigate={setCurrentView} 
+        isOpen={sidebarOpen}
+        onClose={handleSidebarClose}
+      />
 
       <AnimatePresence mode="wait">
         {currentView === 'home' && (

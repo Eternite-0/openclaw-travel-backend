@@ -272,22 +272,22 @@ export function ItineraryView({
       />
 
       {/* Main Content */}
-      <main className="ml-[220px] mr-[300px] pt-16 min-h-screen bg-surface-container-lowest p-8 pb-24">
-        <header className="mb-8">
-          <div className="flex items-center gap-3 mb-2">
-            <h1 className="text-2xl font-extrabold text-on-surface tracking-tight">{title}</h1>
+      <main className="ml-0 lg:ml-[220px] mr-0 xl:mr-[300px] pt-16 min-h-screen bg-surface-container-lowest p-4 md:p-6 lg:p-8 pb-24">
+        <header className="mb-6 md:mb-8">
+          <div className="flex flex-wrap items-center gap-2 md:gap-3 mb-2">
+            <h1 className="text-xl md:text-2xl font-extrabold text-on-surface tracking-tight">{title}</h1>
             <span className="text-[9px] font-bold bg-secondary-container text-on-secondary-container px-2 py-0.5 rounded tracking-wider">MULTI-AGENT SYSTEM</span>
           </div>
-          <p className="text-on-surface-variant text-sm">由多智能体协同生成的个性化行程，已为您优化交通与住宿链路。</p>
+          <p className="text-on-surface-variant text-xs md:text-sm">由多智能体协同生成的个性化行程，已为您优化交通与住宿链路。</p>
         </header>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-8 p-1 bg-surface-container-low w-fit rounded-xl">
+        <div className="flex gap-1 md:gap-2 mb-6 md:mb-8 p-1 bg-surface-container-low w-full md:w-fit rounded-xl overflow-x-auto">
           {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (
             <button
               key={day}
               onClick={() => setActiveDay(day)}
-              className={`px-6 py-2 rounded-lg text-sm transition-colors ${
+              className={`px-3 md:px-6 py-2 rounded-lg text-xs md:text-sm transition-colors whitespace-nowrap ${
                 activeDay === day
                   ? 'font-semibold bg-surface-container-lowest text-primary shadow-sm'
                   : 'font-medium text-on-surface-variant hover:bg-surface-container-high'
@@ -298,7 +298,7 @@ export function ItineraryView({
           ))}
         </div>
 
-        <div className="grid grid-cols-12 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6">
           {/* Schedule Card */}
           <ScheduleCard
             scheduleKey={scheduleKey}
@@ -310,7 +310,7 @@ export function ItineraryView({
           />
 
           {/* Right Widgets */}
-          <div className="col-span-4 space-y-6">
+          <div className="lg:col-span-4 space-y-4 md:space-y-6">
             <DayRouteMap activities={currentDay?.activities ?? []} dayNumber={activeDay} city={destCity} />
             <WeatherWidget destCity={destCity} activeDay={activeDay} currentWeather={currentWeather} />
             <RecommendationsWidget itinerary={itinerary} />
@@ -352,84 +352,126 @@ function BookingSidebar({ itinerary, title, paymentState, onPayment }: {
   paymentState: 'idle' | 'processing' | 'success';
   onPayment: () => void;
 }) {
+  const [isOpen, setIsOpen] = useState(false);
+
   return (
-    <aside className="fixed right-0 top-16 h-[calc(100vh-64px)] w-[300px] bg-surface-container-low flex flex-col p-6 space-y-6 z-40 border-l border-outline-variant/20">
-      <header>
-        <h2 className="text-lg font-bold text-on-surface">确认预订</h2>
-        <p className="text-[10px] uppercase tracking-widest text-on-surface-variant mt-1">{title}</p>
-      </header>
-      <div className="flex text-[10px] font-bold uppercase tracking-widest border-b border-surface-container-high">
-        <button className="flex-1 pb-3 text-primary border-b-2 border-primary">交通</button>
-        <button className="flex-1 pb-3 text-on-surface-variant hover:text-primary">酒店</button>
-        <button className="flex-1 pb-3 text-on-surface-variant hover:text-primary">门票</button>
-      </div>
-      <div className="space-y-6 flex-grow overflow-y-auto">
-        <div>
-          <label className="text-[10px] font-bold text-outline uppercase tracking-wider">产品信息</label>
-          <div className="mt-2 p-3 bg-surface-container-lowest rounded-lg shadow-sm border border-outline-variant/10">
-            {itinerary?.recommended_flight ? (
-              <>
-                <p className="text-sm font-bold text-on-surface">
-                  {itinerary.intent.origin_city} → {itinerary.intent.dest_city}
-                </p>
-                <p className="text-xs text-on-surface-variant mt-1">
-                  {itinerary.recommended_flight.airline} {itinerary.recommended_flight.flight_number}
-                </p>
-                <div className="flex justify-between mt-3 text-[10px] font-medium text-outline">
-                  <span>{formatDT(itinerary.recommended_flight.departure_time)} 出发</span>
-                  <span>约 {itinerary.recommended_flight.duration_hours.toFixed(1)}h</span>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="text-sm font-bold text-on-surface">昆明南 - 大理</p>
-                <p className="text-xs text-on-surface-variant mt-1">G2842 | 高铁二等座</p>
-                <div className="flex justify-between mt-3 text-[10px] font-medium text-outline">
-                  <span>10月12日 09:30出发</span>
-                  <span>耗时 2h 05m</span>
-                </div>
-              </>
-            )}
+    <>
+      {/* Mobile Toggle Button */}
+      <button
+        onClick={() => setIsOpen(true)}
+        className="xl:hidden fixed right-4 bottom-24 z-30 w-12 h-12 bg-primary text-white rounded-full shadow-lg flex items-center justify-center"
+        aria-label="打开预订侧边栏"
+      >
+        <Wallet className="w-5 h-5" />
+      </button>
+
+      {/* Mobile Overlay */}
+      {isOpen && (
+        <div 
+          className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40 xl:hidden"
+          onClick={() => setIsOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside className={`
+        fixed right-0 top-16 h-[calc(100vh-64px)] w-full sm:w-[320px] xl:w-[300px] bg-surface-container-low 
+        flex flex-col p-4 md:p-6 space-y-4 md:space-y-6 z-40 border-l border-outline-variant/20
+        transition-transform duration-300 ease-in-out
+        xl:translate-x-0
+        ${isOpen ? 'translate-x-0' : 'translate-x-full xl:translate-x-0'}
+      `}>
+        {/* Mobile Close Button */}
+        <button
+          onClick={() => setIsOpen(false)}
+          className="xl:hidden absolute top-3 right-3 p-1.5 rounded-lg hover:bg-surface-container-high text-on-surface-variant"
+          aria-label="关闭预订侧边栏"
+        >
+          <X className="w-4 h-4" />
+        </button>
+
+        <header className="mt-2">
+          <h2 className="text-lg font-bold text-on-surface">确认预订</h2>
+          <p className="text-[10px] uppercase tracking-widest text-on-surface-variant mt-1">{title}</p>
+        </header>
+        <div className="flex text-[10px] font-bold uppercase tracking-widest border-b border-surface-container-high">
+          <button className="flex-1 pb-3 text-primary border-b-2 border-primary">交通</button>
+          <button className="flex-1 pb-3 text-on-surface-variant hover:text-primary">酒店</button>
+          <button className="flex-1 pb-3 text-on-surface-variant hover:text-primary">门票</button>
+        </div>
+        <div className="space-y-4 md:space-y-6 flex-grow overflow-y-auto">
+          <div>
+            <label className="text-[10px] font-bold text-outline uppercase tracking-wider">产品信息</label>
+            <div className="mt-2 p-3 bg-surface-container-lowest rounded-lg shadow-sm border border-outline-variant/10">
+              {itinerary?.recommended_flight ? (
+                <>
+                  <p className="text-sm font-bold text-on-surface">
+                    {itinerary.intent.origin_city} → {itinerary.intent.dest_city}
+                  </p>
+                  <p className="text-xs text-on-surface-variant mt-1">
+                    {itinerary.recommended_flight.airline} {itinerary.recommended_flight.flight_number}
+                  </p>
+                  <div className="flex justify-between mt-3 text-[10px] font-medium text-outline">
+                    <span>{formatDT(itinerary.recommended_flight.departure_time)} 出发</span>
+                    <span>约 {itinerary.recommended_flight.duration_hours.toFixed(1)}h</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-bold text-on-surface">昆明南 - 大理</p>
+                  <p className="text-xs text-on-surface-variant mt-1">G2842 | 高铁二等座</p>
+                  <div className="flex justify-between mt-3 text-[10px] font-medium text-outline">
+                    <span>10月12日 09:30出发</span>
+                    <span>耗时 2h 05m</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-outline uppercase tracking-wider">乘车人</label>
+            <div className="mt-2 flex items-center gap-3 p-3 bg-surface-container-lowest rounded-lg shadow-sm border border-outline-variant/10">
+              <User className="w-4 h-4 text-outline" />
+              <span className="text-sm font-medium text-on-surface">张某某 (4201**********)</span>
+            </div>
+          </div>
+          <div className="bg-secondary-container/50 p-3 md:p-4 rounded-xl border border-secondary-container/30">
+            <div className="flex items-center gap-2 mb-2">
+              <Bot className="w-4 h-4 text-on-secondary-container" />
+              <span className="text-[10px] font-bold text-on-secondary-container uppercase tracking-wider">AI 助手建议</span>
+            </div>
+            <p className="text-xs text-on-secondary-container leading-relaxed">
+              {itinerary?.travel_tips?.[0] ?? '当前列车余票充足，建议提前 24 小时预订以锁定最佳座位。由于大理天气转晴，系统已为您自动勾选"靠窗席位"。'}
+            </p>
           </div>
         </div>
-        <div>
-          <label className="text-[10px] font-bold text-outline uppercase tracking-wider">乘车人</label>
-          <div className="mt-2 flex items-center gap-3 p-3 bg-surface-container-lowest rounded-lg shadow-sm border border-outline-variant/10">
-            <User className="w-4 h-4 text-outline" />
-            <span className="text-sm font-medium text-on-surface">张某某 (4201**********)</span>
+        <div className="space-y-3 md:space-y-4 pt-3 md:pt-4 border-t border-outline-variant/10">
+          <div className="flex justify-between items-end">
+            <span className="text-xs font-medium text-on-surface-variant">总计费用</span>
+            <span className="text-xl md:text-2xl font-black text-primary">
+              ¥ {itinerary ? Math.round(itinerary.total_estimated_cost_cny).toLocaleString() : '1200'}
+            </span>
+          </div>
+          <div className="flex gap-3">
+            <button 
+              onClick={() => setIsOpen(false)}
+              className="flex-1 py-3 text-sm font-bold text-primary bg-surface-container-high rounded-xl hover:bg-surface-container-highest transition-colors"
+            >
+              取消
+            </button>
+            <button
+              onClick={onPayment}
+              disabled={paymentState !== 'idle'}
+              className={`flex-[2] py-3 text-sm font-bold text-on-primary rounded-xl shadow-lg transition-all ${
+                paymentState === 'success' ? 'bg-emerald-500 shadow-emerald-500/20' : 'bg-primary shadow-primary/20 hover:opacity-90'
+              }`}
+            >
+              {paymentState === 'idle' ? '确认支付' : paymentState === 'processing' ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : '支付成功'}
+            </button>
           </div>
         </div>
-        <div className="bg-secondary-container/50 p-4 rounded-xl border border-secondary-container/30">
-          <div className="flex items-center gap-2 mb-2">
-            <Bot className="w-4 h-4 text-on-secondary-container" />
-            <span className="text-[10px] font-bold text-on-secondary-container uppercase tracking-wider">AI 助手建议</span>
-          </div>
-          <p className="text-xs text-on-secondary-container leading-relaxed">
-            {itinerary?.travel_tips?.[0] ?? '当前列车余票充足，建议提前 24 小时预订以锁定最佳座位。由于大理天气转晴，系统已为您自动勾选"靠窗席位"。'}
-          </p>
-        </div>
-      </div>
-      <div className="space-y-4 pt-4 border-t border-outline-variant/10">
-        <div className="flex justify-between items-end">
-          <span className="text-xs font-medium text-on-surface-variant">总计费用</span>
-          <span className="text-2xl font-black text-primary">
-            ¥ {itinerary ? Math.round(itinerary.total_estimated_cost_cny).toLocaleString() : '1200'}
-          </span>
-        </div>
-        <div className="flex gap-3">
-          <button className="flex-1 py-3 text-sm font-bold text-primary bg-surface-container-high rounded-xl hover:bg-surface-container-highest transition-colors">取消</button>
-          <button
-            onClick={onPayment}
-            disabled={paymentState !== 'idle'}
-            className={`flex-[2] py-3 text-sm font-bold text-on-primary rounded-xl shadow-lg transition-all ${
-              paymentState === 'success' ? 'bg-emerald-500 shadow-emerald-500/20' : 'bg-primary shadow-primary/20 hover:opacity-90'
-            }`}
-          >
-            {paymentState === 'idle' ? '确认支付' : paymentState === 'processing' ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : '支付成功'}
-          </button>
-        </div>
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 }
 
@@ -447,11 +489,11 @@ function ScheduleCard({ scheduleKey, currentDay, destCity, destCountry, activeDa
       initial={{ opacity: 0.6, scale: 0.98 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.4, ease: 'easeOut' }}
-      className="col-span-8 bg-surface-container-lowest rounded-xl p-6 shadow-[0_8px_32px_rgba(87,94,112,0.04)] ring-1 ring-outline-variant/10"
+      className="lg:col-span-8 bg-surface-container-lowest rounded-xl p-4 md:p-6 shadow-[0_8px_32px_rgba(87,94,112,0.04)] ring-1 ring-outline-variant/10"
     >
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex justify-between items-center mb-4 md:mb-8">
         <div>
-          <h3 className="text-xl font-bold text-on-surface">
+          <h3 className="text-lg md:text-xl font-bold text-on-surface">
             {currentDay?.theme ?? `${destCity}：精彩一日游`}
           </h3>
           <p className="text-[10px] text-outline uppercase tracking-widest mt-1">Day {activeDay} Schedule</p>
@@ -459,19 +501,19 @@ function ScheduleCard({ scheduleKey, currentDay, destCity, destCountry, activeDa
         <Share className="w-5 h-5 text-primary cursor-pointer hover:opacity-70" />
       </div>
 
-      <div className="space-y-10 relative">
+      <div className="space-y-6 md:space-y-10 relative">
         {/* Timeline Line */}
         <div className="absolute left-[7px] top-2 bottom-2 w-0.5 bg-surface-container-high"></div>
 
         {currentDay?.activities ? currentDay.activities.map((act, idx) => (
-          <div key={idx} className="relative flex gap-6 pl-8">
+          <div key={idx} className="relative flex gap-3 md:gap-6 pl-6 md:pl-8">
             <div className={`absolute left-0 top-1.5 w-4 h-4 rounded-full ${idx === 0 ? 'bg-primary' : 'bg-surface-container-highest'} border-4 border-surface-container-lowest z-10`}></div>
-            <div className="flex-grow">
-              <div className="flex justify-between items-start">
-                <h4 className="font-bold text-on-surface text-base">{act.activity}</h4>
-                <span className="text-xs font-bold text-primary bg-primary-container/50 px-2 py-1 rounded flex-shrink-0 ml-2">{act.time}</span>
+            <div className="flex-grow min-w-0">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-1 sm:gap-0">
+                <h4 className="font-bold text-on-surface text-sm md:text-base">{act.activity}</h4>
+                <span className="text-xs font-bold text-primary bg-primary-container/50 px-2 py-1 rounded flex-shrink-0 sm:ml-2 w-fit">{act.time}</span>
               </div>
-              <p className="text-sm text-on-surface-variant mt-2 leading-relaxed">
+              <p className="text-xs md:text-sm text-on-surface-variant mt-1 md:mt-2 leading-relaxed">
                 {act.location} · {act.tips}
               </p>
               {act.estimated_cost_cny > 0 && (
@@ -594,13 +636,13 @@ function RecommendationsWidget({ itinerary }: { itinerary: FinalItinerary | null
 
 function HighlightsSection({ highlights }: { highlights: string[] | undefined }) {
   return (
-    <section className="mt-10 mb-4">
-      <h4 className="text-xs font-bold text-on-surface-variant flex items-center gap-2 mb-4 uppercase tracking-wider">
+    <section className="mt-6 md:mt-10 mb-4">
+      <h4 className="text-xs font-bold text-on-surface-variant flex items-center gap-2 mb-3 md:mb-4 uppercase tracking-wider">
         <Bot className="w-4 h-4" />
         本次行程亮点
       </h4>
       {highlights && highlights.length > 0 ? (
-        <div className="grid grid-cols-4 gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-5">
           {highlights.slice(0, 4).map((hl, idx) => {
             const colors = [
               { bg: 'bg-blue-50/50', border: 'border-blue-100/50', pattern: 'card-pattern-waves', icon: <Clock className="w-5 h-5 text-blue-500 mb-3" /> },
@@ -610,7 +652,7 @@ function HighlightsSection({ highlights }: { highlights: string[] | undefined })
             ];
             const c = colors[idx % colors.length];
             return (
-              <div key={idx} className={`relative ${c.bg} p-5 rounded-xl border ${c.border} overflow-hidden ${c.pattern}`}>
+              <div key={idx} className={`relative ${c.bg} p-4 md:p-5 rounded-xl border ${c.border} overflow-hidden ${c.pattern}`}>
                 <div className="flex flex-col h-full relative z-10">
                   {c.icon}
                   <p className="text-xs text-outline leading-relaxed">{hl}</p>
@@ -620,29 +662,29 @@ function HighlightsSection({ highlights }: { highlights: string[] | undefined })
           })}
         </div>
       ) : (
-        <div className="grid grid-cols-4 gap-5">
-          <div className="relative bg-blue-50/50 p-5 rounded-xl border border-blue-100/50 overflow-hidden card-pattern-waves">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-5">
+          <div className="relative bg-blue-50/50 p-4 md:p-5 rounded-xl border border-blue-100/50 overflow-hidden card-pattern-waves">
             <div className="flex flex-col h-full relative z-10">
               <Clock className="w-5 h-5 text-blue-500 mb-3" />
               <h5 className="text-sm font-bold text-on-surface mb-1.5">行程节奏合理</h5>
               <p className="text-xs text-outline leading-relaxed">每日安排适中，游玩与休息更平衡</p>
             </div>
           </div>
-          <div className="relative bg-emerald-50/50 p-5 rounded-xl border border-emerald-100/50 overflow-hidden card-pattern-dots">
+          <div className="relative bg-emerald-50/50 p-4 md:p-5 rounded-xl border border-emerald-100/50 overflow-hidden card-pattern-dots">
             <div className="flex flex-col h-full relative z-10">
               <Wallet className="w-5 h-5 text-emerald-500 mb-3" />
               <h5 className="text-sm font-bold text-on-surface mb-1.5">预算控制良好</h5>
               <p className="text-xs text-outline leading-relaxed">交通与住宿分配均衡，整体更省心</p>
             </div>
           </div>
-          <div className="relative bg-orange-50/50 p-5 rounded-xl border border-orange-100/50 overflow-hidden card-pattern-mountains">
+          <div className="relative bg-orange-50/50 p-4 md:p-5 rounded-xl border border-orange-100/50 overflow-hidden card-pattern-mountains">
             <div className="flex flex-col h-full relative z-10">
               <Mountain className="w-5 h-5 text-orange-500 mb-3" />
               <h5 className="text-sm font-bold text-on-surface mb-1.5">覆盖核心景点</h5>
               <p className="text-xs text-outline leading-relaxed">包含古城、洱海与当地特色体验</p>
             </div>
           </div>
-          <div className="relative bg-purple-50/50 p-5 rounded-xl border border-purple-100/50 overflow-hidden card-pattern-geo">
+          <div className="relative bg-purple-50/50 p-4 md:p-5 rounded-xl border border-purple-100/50 overflow-hidden card-pattern-geo">
             <div className="flex flex-col h-full relative z-10">
               <Network className="w-5 h-5 text-purple-500 mb-3" />
               <h5 className="text-sm font-bold text-on-surface mb-1.5">多智能体协同优化</h5>
@@ -880,7 +922,7 @@ function ChatPanel({
     }
   }, [speechSupported, isListening, inputValue]);
   return (
-    <div className="fixed bottom-6 right-[324px] z-40">
+    <div className="fixed bottom-4 md:bottom-6 right-4 md:right-6 xl:right-[324px] z-40">
       <AnimatePresence>
         {chatOpen && (
           <motion.div
@@ -888,7 +930,7 @@ function ChatPanel({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 16, scale: 0.95 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
-            className="absolute bottom-16 right-0 w-[420px] bg-white/98 backdrop-blur-2xl rounded-2xl border border-outline-variant/15 shadow-[0_12px_48px_rgba(87,94,112,0.18)] overflow-hidden flex flex-col"
+            className="absolute bottom-16 right-0 w-[calc(100vw-32px)] sm:w-[380px] md:w-[420px] bg-white/98 backdrop-blur-2xl rounded-2xl border border-outline-variant/15 shadow-[0_12px_48px_rgba(87,94,112,0.18)] overflow-hidden flex flex-col"
             style={{ maxHeight: 'calc(100vh - 160px)' }}
           >
             {/* ── Header ── */}

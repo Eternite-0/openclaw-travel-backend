@@ -111,7 +111,7 @@ export function ProcessingView({ taskId, onComplete, onCancel }: ProcessingViewP
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="ml-[220px] pt-16 min-h-screen bg-surface-container-lowest flex flex-col items-center justify-center relative overflow-hidden"
+        className="ml-0 lg:ml-[220px] pt-16 min-h-screen bg-surface-container-lowest flex flex-col items-center justify-center relative overflow-hidden"
       >
         {/* Blurred background effect */}
         <div className="absolute inset-0 backdrop-blur-sm bg-white/60" />
@@ -191,11 +191,11 @@ export function ProcessingView({ taskId, onComplete, onCancel }: ProcessingViewP
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 1.02 }}
       transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-      className="ml-[220px] pt-16 min-h-screen bg-surface-container-lowest flex flex-col items-center justify-center relative overflow-hidden"
+      className="ml-0 lg:ml-[220px] pt-16 min-h-screen bg-surface-container-lowest flex flex-col items-center justify-center relative overflow-hidden"
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle,#e2e8f0_1px,transparent_1px)] [background-size:40px_40px] opacity-40 pointer-events-none" />
 
-      <div className="max-w-lg w-full p-10 bg-white/80 backdrop-blur-xl rounded-[2rem] border border-outline-variant/20 shadow-[0_8px_32px_rgba(87,94,112,0.08)] relative z-10">
+      <div className="max-w-lg w-full mx-4 p-6 md:p-10 bg-white/80 backdrop-blur-xl rounded-[2rem] border border-outline-variant/20 shadow-[0_8px_32px_rgba(87,94,112,0.08)] relative z-10">
         {/* Header */}
         <div className="flex flex-col items-center gap-3 mb-8">
           <div className="relative">
