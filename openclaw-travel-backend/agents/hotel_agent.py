@@ -30,7 +30,7 @@ class HotelAgent(BaseSpecialistAgent):
 9. highlights 列表须包含3-5个该酒店的主要特色（可从实时数据中提取评价/设施）。
 10. recommended_index 为 0-2 之间的整数，指向与旅行风格和预算最匹配的选项。
 11. area 字段填写酒店所在区域，便于旅行者了解地理位置。
-12. booking_tip 必须注明数据来源（如"来源：SerpAPI实时数据"或"来源：Tavily搜索"或"来源：市场估价"）。
+12. booking_tip 必须注明数据来源（如"来源：百度实时搜索"、"来源：SerpAPI实时数据"或"来源：Tavily搜索"或"来源：市场估价"）。
 
 【旅行意图】
 {intent}
@@ -38,6 +38,8 @@ class HotelAgent(BaseSpecialistAgent):
 【预算参考（住宿部分）】
 住宿总预算: ¥{hotel_budget_cny}
 每晚参考预算: ¥{per_night_budget_cny}
+
+{baidu_data}
 
 {serpapi_data}
 
@@ -62,6 +64,7 @@ class HotelAgent(BaseSpecialistAgent):
             intent=self.intent.model_dump_json(indent=2),
             hotel_budget_cny=f"{hotel_budget:.0f}",
             per_night_budget_cny=f"{per_night:.0f}",
+            baidu_data=context.get("baidu_data", "（百度实时搜索数据：未启用/已用尽/获取失败）"),
             serpapi_data=context.get("serpapi_data", "（SerpAPI 酒店数据：未启用）"),
             tavily_data=context.get("tavily_data", "（Tavily 搜索数据：未启用）"),
             crawleo_data=context.get("crawleo_data", "（Crawleo 搜索数据：未启用）"),

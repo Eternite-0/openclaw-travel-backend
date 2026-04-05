@@ -101,7 +101,7 @@ export interface WalkingRouteResponse {
 }
 
 export async function fetchWalkingRoute(
-  waypoints: { lat: number; lng: number }[],
+  waypoints: { lat: number; lng: number; name?: string; location?: string; city?: string }[],
 ): Promise<WalkingRouteResponse> {
   const res = await fetch(`${API_BASE}/route/walking`, {
     method: 'POST',

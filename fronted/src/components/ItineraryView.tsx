@@ -311,7 +311,7 @@ export function ItineraryView({
 
           {/* Right Widgets */}
           <div className="col-span-4 space-y-6">
-            <DayRouteMap activities={currentDay?.activities ?? []} dayNumber={activeDay} />
+            <DayRouteMap activities={currentDay?.activities ?? []} dayNumber={activeDay} city={destCity} />
             <WeatherWidget destCity={destCity} activeDay={activeDay} currentWeather={currentWeather} />
             <RecommendationsWidget itinerary={itinerary} />
           </div>

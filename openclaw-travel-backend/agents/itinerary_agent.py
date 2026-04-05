@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import math
+import random
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -266,8 +267,8 @@ created_at: {created_at}
     async def _llm_call(self, system_prompt: str, user_prompt: str = "请按照系统提示中的 JSON Schema 输出结果。") -> dict:
         """Single LLM call with retry, returns parsed dict."""
         last_exc: Exception | None = None
-        _retry_delays = [3, 6]
-        for attempt in range(3):
+        _retry_delays = [3, 8, 15]
+        for attempt in range(4):
             try:
                 completion = await self._client.chat.completions.create(
                     model=self._model,
@@ -284,8 +285,9 @@ created_at: {created_at}
                 raise ValueError(f"LLM returned invalid JSON: {exc}") from exc
             except Exception as exc:
                 last_exc = exc
-                if attempt < 2:
-                    await asyncio.sleep(_retry_delays[attempt])
+                if attempt < 3:
+                    jitter = random.uniform(0.0, 1.2)
+                    await asyncio.sleep(_retry_delays[attempt] + jitter)
                 else:
                     raise
         raise ValueError(f"LLM request failed: {last_exc}")
@@ -361,7 +363,7 @@ created_at: {created_at}
         for i in range(0, len(skeletons_list), batch_size):
             batches.append(skeletons_list[i : i + batch_size])
 
-        sem = asyncio.Semaphore(settings.agent_concurrency)
+        sem = asyncio.Semaphore(max(settings.itinerary_day_concurrency, 1))
 
         async def _gen_day_batch(batch: list[_DaySkeleton]) -> list[ItineraryDay]:
             day_nums = [s.day_number for s in batch]

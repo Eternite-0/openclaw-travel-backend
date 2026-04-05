@@ -14,6 +14,9 @@ router = APIRouter()
 class Waypoint(BaseModel):
     lat: float
     lng: float
+    name: str = ""
+    location: str = ""
+    city: str = ""
 
 
 class WalkingRouteRequest(BaseModel):
@@ -36,7 +39,16 @@ async def walking_route(body: WalkingRouteRequest) -> WalkingRouteResponse:
     if len(body.waypoints) < 2:
         return WalkingRouteResponse(segments=[], ok=False)
 
-    wp_dicts = [{"lat": w.lat, "lng": w.lng} for w in body.waypoints]
+    wp_dicts = [
+        {
+            "lat": w.lat,
+            "lng": w.lng,
+            "name": w.name,
+            "location": w.location,
+            "city": w.city,
+        }
+        for w in body.waypoints
+    ]
     segments = await get_walking_route_multi(wp_dicts)
 
     return WalkingRouteResponse(segments=segments, ok=bool(segments))

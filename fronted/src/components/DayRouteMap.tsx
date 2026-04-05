@@ -72,9 +72,10 @@ const AMAP_SUBDOMAINS = ['1', '2', '3', '4'];
 interface DayRouteMapProps {
   activities: ItineraryActivity[];
   dayNumber: number;
+  city?: string;
 }
 
-export function DayRouteMap({ activities, dayNumber }: DayRouteMapProps) {
+export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapProps) {
   const points = useMemo(() =>
     activities
       .filter((a) => a.lat != null && a.lng != null)
@@ -118,9 +119,17 @@ export function DayRouteMap({ activities, dayNumber }: DayRouteMapProps) {
     }
     setRouteLoading(true);
     try {
-      const resp = await fetchWalkingRoute(points.map((p) => ({ lat: p.lat, lng: p.lng })));
+      const resp = await fetchWalkingRoute(
+        points.map((p) => ({
+          lat: p.lat,
+          lng: p.lng,
+          name: p.name,
+          location: p.location,
+          city,
+        })),
+      );
       if (resp.ok && resp.segments.length > 0) {
-        setRouteSegments(resp.segments);
+        setRouteSegments(resp.segments.filter((seg) => Array.isArray(seg) && seg.length > 1));
       } else {
         setRouteSegments(null);
       }

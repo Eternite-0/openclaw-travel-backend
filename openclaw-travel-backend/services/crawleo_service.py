@@ -103,6 +103,14 @@ async def search_hotels(city: str, check_in: str, check_out: str) -> str:
     return _format_results(data, label="Crawleo 酒店实时搜索")
 
 
+async def search_attractions(city: str, country: str = "") -> str:
+    """Search for real-time attraction info and return formatted text for LLM prompt."""
+    location = f"{city} {country}".strip() if country else city
+    query = f"top attractions in {location} opening hours ticket price address travel tips"
+    data = await search(query, count=5)
+    return _format_results(data, label="Crawleo 景点实时搜索")
+
+
 def _format_results(data: dict[str, Any], label: str) -> str:
     """Convert Crawleo search results to compact text for LLM prompt injection."""
     if not data:

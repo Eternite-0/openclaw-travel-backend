@@ -34,13 +34,20 @@ class Settings(BaseSettings):
     crawleo_api_key: str = ""
     crawleo_enabled: bool = True
 
+    baidu_ai_search_api_key: str = ""
+    baidu_ai_search_api_keys: str = ""
+    baidu_ai_search_enabled: bool = True
+    baidu_ai_search_model: str = "ernie-4.5-turbo-32k"
+
     amap_api_key: str = ""
     amap_enabled: bool = True
 
     # Search strategy: "serpapi_first" (default), "tavily_first", "all" (legacy triple-source)
     search_strategy: str = "serpapi_first"
     # Max concurrent LLM agent calls (avoid 429 from provider)
-    agent_concurrency: int = 3
+    agent_concurrency: int = 1
+    # Max concurrent day-batch generation calls in ItineraryAgent
+    itinerary_day_concurrency: int = 2
 
     @property
     def llm_config(self) -> dict:

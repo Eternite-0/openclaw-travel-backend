@@ -36,8 +36,14 @@ class AttractionAgent(BaseSpecialistAgent):
 【旅行意图】
 {intent}
 
-【实时搜索数据（来自 Tavily）】
+【实时搜索数据（百度优先）】
+{baidu_data}
+
+【补充搜索数据（来自 Tavily）】
 {tavily_data}
+
+【补充搜索数据（来自 Crawleo）】
+{crawleo_data}
 
 【输出 JSON Schema】
 {schema}
@@ -50,12 +56,20 @@ class AttractionAgent(BaseSpecialistAgent):
             ensure_ascii=False,
             separators=(",", ":"),
         )
+        baidu_data = context.get("baidu_data", "")
         tavily_data = context.get("tavily_data", "")
+        crawleo_data = context.get("crawleo_data", "")
+        if not baidu_data:
+            baidu_data = "（未获取到百度实时景点数据）"
         if not tavily_data:
-            tavily_data = "（未获取到实时景点数据，请基于你的知识推荐）"
+            tavily_data = "（未获取到 Tavily 实时景点数据）"
+        if not crawleo_data:
+            crawleo_data = "（未获取到 Crawleo 实时景点数据）"
         return self.SYSTEM_PROMPT_TEMPLATE.format(
             intent=self.intent.model_dump_json(indent=2),
+            baidu_data=baidu_data,
             tavily_data=tavily_data,
+            crawleo_data=crawleo_data,
             schema=schema_json,
         )
 

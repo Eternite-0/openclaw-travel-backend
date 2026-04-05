@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 from abc import abstractmethod
 from typing import Any
 
@@ -113,9 +114,9 @@ class BaseSpecialistAgent:
 
         logger.debug("Agent %s calling LLM", self.agent_name)
         last_exc: Exception | None = None
-        _retry_delays = [3, 6]
+        _retry_delays = [3, 8, 15]
         completion = None
-        for attempt in range(3):
+        for attempt in range(4):
             try:
                 completion = await self._client.chat.completions.create(
                     model=self._model,
@@ -134,21 +135,26 @@ class BaseSpecialistAgent:
                         body = (exc.response.text or "")[:200]
                     except Exception:
                         body = str(exc)[:200]
-                if status_code in {429, 502, 503, 504} and attempt < 2:
+                if status_code in {429, 502, 503, 504} and attempt < 3:
                     delay = _retry_delays[attempt]
+                    jitter = random.uniform(0.0, 1.2)
                     logger.warning(
-                        "Agent %s got HTTP %d, retrying in %ds... body=%s",
-                        self.agent_name, status_code, delay, body,
+                        "Agent %s got HTTP %d, retrying in %.1fs... body=%s",
+                        self.agent_name, status_code, delay + jitter, body,
                     )
-                    await asyncio.sleep(delay)
+                    await asyncio.sleep(delay + jitter)
                     continue
                 raise ValueError(f"LLM API error {status_code}: {body or str(exc)}") from exc
             except (APIConnectionError, APITimeoutError) as exc:
                 last_exc = exc
-                if attempt < 2:
+                if attempt < 3:
                     delay = _retry_delays[attempt]
-                    logger.warning("Agent %s attempt %d failed (%s), retrying in %ds...", self.agent_name, attempt + 1, exc, delay)
-                    await asyncio.sleep(delay)
+                    jitter = random.uniform(0.0, 1.2)
+                    logger.warning(
+                        "Agent %s attempt %d failed (%s), retrying in %.1fs...",
+                        self.agent_name, attempt + 1, exc, delay + jitter,
+                    )
+                    await asyncio.sleep(delay + jitter)
                 else:
                     raise
         if completion is None:
