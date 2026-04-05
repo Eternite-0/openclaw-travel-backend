@@ -6,18 +6,41 @@ import logging
 from typing import Any, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 
 from agents.orchestrator import ALL_AGENT_NAMES, run_travel_pipeline
 from config import get_settings
 from core.memory import MemoryManager
 from core.schemas import ChatRequest, ChatResponse
+from core.security import get_current_user
 from core.status_store import StatusStore
-from database import get_session_last_result
+from database import UserRecord, get_session_last_result
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# ── Session-level pipeline lock ──────────────────────────────────────────────
+# Prevents two concurrent pipelines from running in the same session,
+# which would cause memory/history interleaving.
+_session_locks: dict[str, asyncio.Lock] = {}
+_session_locks_guard = asyncio.Lock()  # protects _session_locks dict itself
+
+
+async def _get_session_lock(session_id: str) -> asyncio.Lock:
+    """Get or create a per-session asyncio.Lock."""
+    async with _session_locks_guard:
+        if session_id not in _session_locks:
+            _session_locks[session_id] = asyncio.Lock()
+        return _session_locks[session_id]
+
+
+async def _cleanup_session_lock(session_id: str) -> None:
+    """Remove session lock after pipeline finishes to avoid unbounded growth."""
+    async with _session_locks_guard:
+        lock = _session_locks.get(session_id)
+        if lock and not lock.locked():
+            _session_locks.pop(session_id, None)
 
 # ── Pipeline keyword detection ───────────────────────────────────────────────
 # Only messages containing these keywords can EVER trigger the pipeline.
@@ -175,7 +198,8 @@ async def _call_llm(
     )
     try:
         payload_messages = messages or [{"role": "user", "content": prompt or ""}]
-        for attempt in range(2):
+        _retry_delays = [2, 5, 10, 15, 20, 30]
+        for attempt in range(7):
             try:
                 completion = await client.chat.completions.create(
                     model=model,
@@ -195,16 +219,20 @@ async def _call_llm(
                 return str(content).strip()
             except APIStatusError as exc:
                 status_code = exc.status_code or 0
-                if status_code in {429, 502, 503, 504} and attempt == 0:
-                    await asyncio.sleep(1.5)
+                if status_code in {429, 502, 503, 504} and attempt < 6:
+                    delay = _retry_delays[attempt]
+                    logger.warning("LLM status %d, retrying in %ds...", status_code, delay)
+                    await asyncio.sleep(delay)
                     continue
                 logger.warning("LLM returned status %s", status_code)
                 return None
             except (APIConnectionError, APITimeoutError) as exc:
-                if attempt == 0:
-                    await asyncio.sleep(1.5)
+                if attempt < 6:
+                    delay = _retry_delays[attempt]
+                    logger.warning("LLM call failed (%s), retrying in %ds...", exc, delay)
+                    await asyncio.sleep(delay)
                     continue
-                logger.warning("LLM call failed: %s", exc)
+                logger.warning("LLM call failed after 7 attempts: %s", exc)
                 return None
         return None
     except Exception as exc:
@@ -412,41 +440,47 @@ async def _background_pipeline(
     status_store: StatusStore,
     llm_config: dict,
     redis_client,
+    user_id: str = "anonymous",
     original_task_id: Optional[str] = None,
     user_attachments: Optional[list[dict[str, Any]]] = None,
 ) -> None:
-    try:
-        memory = MemoryManager(
-            session_id=session_id,
-            max_short_term=get_settings().max_short_term_memory,
-            redis_client=redis_client,
-        )
-        from database import get_engine
-        from sqlmodel import Session as DBSession
-
-        with DBSession(get_engine()) as db_session:
-            await run_travel_pipeline(
-                user_message=user_message,
+    lock = await _get_session_lock(session_id)
+    async with lock:
+        try:
+            memory = MemoryManager(
                 session_id=session_id,
-                task_id=task_id,
-                memory=memory,
-                status_store=status_store,
-                llm_config=llm_config,
-                db_session=db_session,
-                original_task_id=original_task_id,
-                user_attachments=user_attachments,
+                max_short_term=get_settings().max_short_term_memory,
+                redis_client=redis_client,
             )
-    except Exception as exc:
-        err_msg = f"{type(exc).__name__}: {exc}"
-        logger.exception("[task:%s] Pipeline failed: %s", task_id, exc)
-        await status_store.update_agent(task_id, "intent_parser", "error", message=err_msg[:300])
-        await status_store.set_overall_status(task_id, "error")
+            from database import get_engine
+            from sqlmodel import Session as DBSession
+
+            with DBSession(get_engine()) as db_session:
+                await run_travel_pipeline(
+                    user_message=user_message,
+                    session_id=session_id,
+                    task_id=task_id,
+                    memory=memory,
+                    status_store=status_store,
+                    llm_config=llm_config,
+                    db_session=db_session,
+                    user_id=user_id,
+                    original_task_id=original_task_id,
+                    user_attachments=user_attachments,
+                )
+        except Exception as exc:
+            err_msg = f"{type(exc).__name__}: {exc}"
+            logger.exception("[task:%s] Pipeline failed: %s", task_id, exc)
+            await status_store.update_agent(task_id, "intent_parser", "error", message=err_msg[:300])
+            await status_store.set_overall_status(task_id, "error")
+    await _cleanup_session_lock(session_id)
 
 
 @router.post("/chat", response_model=ChatResponse)
 async def post_chat(
     body: ChatRequest,
     request: Request,
+    current_user: UserRecord = Depends(get_current_user),
 ) -> ChatResponse:
     session_id = body.session_id or str(uuid4())
     redis_client = getattr(request.app.state, "redis", None)
@@ -492,6 +526,7 @@ async def post_chat(
             status_store=status_store,
             llm_config=llm_config,
             redis_client=redis_client,
+            user_id=current_user.user_id,
             original_task_id=body.task_id,
             user_attachments=history_attachments,
         )

@@ -193,6 +193,49 @@ created_at: {created_at}
 
 现在请生成完整的旅行行程 JSON："""
 
+    # Phase 3c: regenerate only specific days (partial modification)
+    _PARTIAL_DAY_PROMPT = """你是"智慧旅行助手"系统中的行程生成专家。
+
+【本次任务 — 仅重新生成第 {day_range} 天的行程】
+用户请求修改部分行程，请**仅**重新生成下方指定的天数，其余天数保持不变。
+
+【用户修改请求】
+{user_message}
+
+【约束规则】
+1. 只输出合法 JSON，格式符合下方 Schema。禁止 markdown、解释文字。
+2. 每天必须包含 4-6 个 activities，合理分配上午/下午/晚上。
+3. 每天必须包含 meals 字典，键为 "breakfast"/"lunch"/"dinner"，值为具体餐厅名称+推荐菜品+人均价格。
+4. 行程安排须考虑：景点开放时间、交通距离、天气状况、预算限制。
+5. transport_notes 提供当天景点间的交通建议。
+6. daily_budget_cny 为当天所有活动+餐饮+交通的估算费用。
+7. date 格式为 YYYY-MM-DD，从出发日 {departure_date} 开始计算。
+8. 每个 activity 必须包含 lat 和 lng 字段（GCJ-02 高德/国测局坐标系）。
+9. 请根据用户的修改请求，合理调整活动安排，但保持与整体行程的一致性。
+
+【旅行意图】
+{intent}
+
+【景点列表】
+{attractions}
+
+【天气预报】
+{weather}
+
+【餐厅推荐数据】
+{restaurants}
+
+【上一版完整行程（未修改天数保持不变）】
+{previous_itinerary}
+
+【需要重新生成的天数编号】
+{target_days}
+
+【输出 JSON Schema】
+{day_batch_schema}
+
+现在请输出 JSON（仅包含需要修改的天数）："""
+
     def __init__(
         self,
         task_id: str,
@@ -201,10 +244,73 @@ created_at: {created_at}
         llm_config: dict,
         session_id: str = "",
         previous_itinerary: str = "",
+        user_message: str = "",
+        change_hints: list = None,
     ) -> None:
         super().__init__(task_id, intent, status_store, llm_config)
         self._session_id = session_id
         self._previous_itinerary = previous_itinerary
+        self._user_message = user_message
+        self._change_hints = change_hints or []
+
+    # ── Helper: detect which days need regeneration ─────────────────────
+
+    @staticmethod
+    def _detect_target_days(user_message: str, total_days: int) -> list[int]:
+        """Parse user message to find which day numbers they want to modify.
+        Returns list of day numbers (1-indexed), or empty list if cannot determine.
+        """
+        import re
+        msg = user_message.lower()
+        found: set[int] = set()
+
+        # Match patterns like "第2天", "第二天", "day 3", "第3-5天", "第三到五天"
+        cn_digits = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+                     "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+
+        # Pattern: 第N天 (arabic)
+        for m in re.finditer(r"第(\d+)\s*天", msg):
+            found.add(int(m.group(1)))
+
+        # Pattern: 第N-M天 (arabic range)
+        for m in re.finditer(r"第(\d+)\s*[-~到至]\s*(\d+)\s*天", msg):
+            start, end = int(m.group(1)), int(m.group(2))
+            found.update(range(start, end + 1))
+
+        # Pattern: 第X天 (chinese digit)
+        for m in re.finditer(r"第([一二三四五六七八九十]+)\s*天", msg):
+            cn = m.group(1)
+            if cn in cn_digits:
+                found.add(cn_digits[cn])
+
+        # Pattern: 第X到Y天 (chinese range)
+        for m in re.finditer(r"第([一二三四五六七八九十]+)\s*[到至]\s*([一二三四五六七八九十]+)\s*天", msg):
+            s, e = cn_digits.get(m.group(1), 0), cn_digits.get(m.group(2), 0)
+            if s and e:
+                found.update(range(s, e + 1))
+
+        # Pattern: "最后一天"
+        if "最后一天" in msg:
+            found.add(total_days)
+
+        # Pattern: "第一天" / "首日"
+        if "首日" in msg or "第一天" in msg:
+            found.add(1)
+
+        # Filter to valid range
+        return sorted(d for d in found if 1 <= d <= total_days)
+
+    def _is_partial_modification(self) -> bool:
+        """Check if this is a partial day modification (not a full re-plan)."""
+        hints = set(self._change_hints) if self._change_hints else set()
+        # Only partial when: has previous itinerary, change_hints is ["itinerary"],
+        # and user message mentions specific day(s)
+        if not self._previous_itinerary:
+            return False
+        if hints and hints != {"itinerary"}:
+            return False
+        target_days = self._detect_target_days(self._user_message, self.intent.duration_days)
+        return len(target_days) > 0
 
     # ── Helper: compact object to string ──────────────────────────────
 
@@ -267,8 +373,8 @@ created_at: {created_at}
     async def _llm_call(self, system_prompt: str, user_prompt: str = "请按照系统提示中的 JSON Schema 输出结果。") -> dict:
         """Single LLM call with retry, returns parsed dict."""
         last_exc: Exception | None = None
-        _retry_delays = [3, 8, 15]
-        for attempt in range(4):
+        _retry_delays = [2, 5, 10, 15, 20, 30]
+        for attempt in range(7):
             try:
                 completion = await self._client.chat.completions.create(
                     model=self._model,
@@ -285,16 +391,107 @@ created_at: {created_at}
                 raise ValueError(f"LLM returned invalid JSON: {exc}") from exc
             except Exception as exc:
                 last_exc = exc
-                if attempt < 3:
+                if attempt < 6:
                     jitter = random.uniform(0.0, 1.2)
                     await asyncio.sleep(_retry_delays[attempt] + jitter)
                 else:
                     raise
         raise ValueError(f"LLM request failed: {last_exc}")
 
+    # ── Partial day regeneration (only modified days) ───────────────────
+
+    async def _execute_partial(self, context: dict[str, Any]) -> BaseModel:
+        """Regenerate only specific days from user request, keep everything else."""
+        previous_itinerary_str = context.get("previous_itinerary", self._previous_itinerary)
+        prev_data = json.loads(previous_itinerary_str) if isinstance(previous_itinerary_str, str) else {}
+
+        target_days = self._detect_target_days(self._user_message, self.intent.duration_days)
+        logger.info("[task:%s] Partial modification — regenerating day(s): %s", self.task_id, target_days)
+        await self.status_store.update_agent(
+            self.task_id, self.agent_name, "running",
+            message=f"正在重新生成第 {', '.join(str(d) for d in target_days)} 天的行程...",
+        )
+
+        prev_days_raw = prev_data.get("days", [])
+        prev_days_map: dict[int, dict] = {}
+        for d in prev_days_raw:
+            dn = d.get("day_number")
+            if dn is not None:
+                prev_days_map[dn] = d
+
+        attractions_str = self._compact_attractions(context.get("attractions"))
+        weather_str = self._compact(context.get("weather"))
+        restaurants_str = context.get("restaurants", "") or "（未获取到实时餐厅数据，请基于目的地知名餐厅推荐）"
+
+        day_batch_schema = json.dumps(
+            _DayBatchResult.model_json_schema(), ensure_ascii=False, separators=(",", ":"),
+        )
+
+        prev_for_prompt = previous_itinerary_str
+        if isinstance(prev_for_prompt, str) and len(prev_for_prompt) > 5000:
+            prev_for_prompt = prev_for_prompt[:5000] + "...(truncated)"
+
+        day_range = ", ".join(str(d) for d in target_days)
+        prompt = self._PARTIAL_DAY_PROMPT.format(
+            day_range=day_range,
+            user_message=self._user_message,
+            departure_date=self.intent.departure_date.isoformat(),
+            intent=self.intent.model_dump_json(indent=2),
+            attractions=attractions_str,
+            weather=weather_str,
+            restaurants=restaurants_str,
+            previous_itinerary=prev_for_prompt or "（无上一版行程）",
+            target_days=day_range,
+            day_batch_schema=day_batch_schema,
+        )
+
+        data = await self._llm_call(prompt)
+        new_days_result = _DayBatchResult.model_validate(data)
+        new_days_map = {d.day_number: d for d in new_days_result.days}
+
+        # Merge: replace target days, keep the rest from previous itinerary
+        all_days: list[ItineraryDay] = []
+        for dn in range(1, self.intent.duration_days + 1):
+            if dn in new_days_map:
+                all_days.append(new_days_map[dn])
+            elif dn in prev_days_map:
+                all_days.append(ItineraryDay.model_validate(prev_days_map[dn]))
+            else:
+                logger.warning("[task:%s] Day %d missing from both new and previous", self.task_id, dn)
+
+        # Reuse metadata from previous itinerary
+        recommended_flight_obj, recommended_hotel_obj = self._extract_recommended_objects(context)
+        prev_highlights = prev_data.get("highlights", [])
+        prev_tips = prev_data.get("travel_tips", [])
+        prev_contacts = prev_data.get("emergency_contacts", {})
+        prev_cost = prev_data.get("total_estimated_cost_cny", 0)
+
+        itinerary = FinalItinerary(
+            task_id=self.task_id,
+            session_id=self._session_id,
+            created_at=datetime.utcnow(),
+            intent=self.intent,
+            currency=context.get("currency"),
+            budget=context.get("budget"),
+            recommended_flight=recommended_flight_obj,
+            recommended_hotel=recommended_hotel_obj,
+            weather=context.get("weather"),
+            highlights=prev_highlights,
+            days=all_days,
+            total_estimated_cost_cny=prev_cost,
+            travel_tips=prev_tips,
+            emergency_contacts=prev_contacts,
+        )
+        logger.info("[task:%s] Partial itinerary assembled — modified %d day(s)", self.task_id, len(target_days))
+        return itinerary
+
     # ── Override _execute for parallel generation ─────────────────────
 
     async def _execute(self, context: dict[str, Any]) -> BaseModel:
+        # Check if this is a partial modification (only specific days)
+        if self._is_partial_modification():
+            return await self._execute_partial(context)
+
         settings = get_settings()
         duration = self.intent.duration_days
 

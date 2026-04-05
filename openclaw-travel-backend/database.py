@@ -6,10 +6,22 @@ from sqlmodel import Field, Session, SQLModel, create_engine, select
 from config import get_settings
 
 
+class UserRecord(SQLModel, table=True):
+    __tablename__ = "user"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True, unique=True)
+    username: str = Field(index=True, unique=True)
+    email: Optional[str] = Field(default=None, index=True)
+    password_hash: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    is_active: bool = True
+
+
 class ItineraryRecord(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     task_id: str = Field(index=True, unique=True)
     session_id: str = Field(index=True)
+    user_id: str = Field(default="anonymous", index=True)
     created_at: datetime
     itinerary_json: str
     origin_city: str
@@ -23,6 +35,7 @@ class ConversationRecord(SQLModel, table=True):
     __tablename__ = "conversation"
     id: Optional[int] = Field(default=None, primary_key=True)
     conversation_id: str = Field(index=True, unique=True)
+    user_id: str = Field(default="anonymous", index=True)
     title: str = "New AI chat"
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

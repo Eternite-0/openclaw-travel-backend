@@ -114,9 +114,9 @@ class BaseSpecialistAgent:
 
         logger.debug("Agent %s calling LLM", self.agent_name)
         last_exc: Exception | None = None
-        _retry_delays = [3, 8, 15]
+        _retry_delays = [2, 5, 10, 15, 20, 30]
         completion = None
-        for attempt in range(4):
+        for attempt in range(7):
             try:
                 completion = await self._client.chat.completions.create(
                     model=self._model,
@@ -135,7 +135,7 @@ class BaseSpecialistAgent:
                         body = (exc.response.text or "")[:200]
                     except Exception:
                         body = str(exc)[:200]
-                if status_code in {429, 502, 503, 504} and attempt < 3:
+                if status_code in {429, 502, 503, 504} and attempt < 6:
                     delay = _retry_delays[attempt]
                     jitter = random.uniform(0.0, 1.2)
                     logger.warning(
@@ -147,7 +147,7 @@ class BaseSpecialistAgent:
                 raise ValueError(f"LLM API error {status_code}: {body or str(exc)}") from exc
             except (APIConnectionError, APITimeoutError) as exc:
                 last_exc = exc
-                if attempt < 3:
+                if attempt < 6:
                     delay = _retry_delays[attempt]
                     jitter = random.uniform(0.0, 1.2)
                     logger.warning(

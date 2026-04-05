@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from core.memory import MemoryManager
 from core.schemas import ClearResponse, HistoryResponse
+from core.security import get_current_user
 from config import get_settings
+from database import UserRecord
 
 router = APIRouter()
 
 
 @router.get("/sessions/{session_id}/history", response_model=HistoryResponse)
-async def get_session_history(session_id: str, request: Request) -> HistoryResponse:
+async def get_session_history(
+    session_id: str,
+    request: Request,
+    current_user: UserRecord = Depends(get_current_user),
+) -> HistoryResponse:
     redis_client = getattr(request.app.state, "redis", None)
     memory = MemoryManager(
         session_id=session_id,
@@ -22,7 +28,11 @@ async def get_session_history(session_id: str, request: Request) -> HistoryRespo
 
 
 @router.post("/sessions/{session_id}/clear", response_model=ClearResponse)
-async def clear_session_history(session_id: str, request: Request) -> ClearResponse:
+async def clear_session_history(
+    session_id: str,
+    request: Request,
+    current_user: UserRecord = Depends(get_current_user),
+) -> ClearResponse:
     redis_client = getattr(request.app.state, "redis", None)
     memory = MemoryManager(
         session_id=session_id,

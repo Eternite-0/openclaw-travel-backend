@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date, timedelta
 from typing import Any
 
@@ -9,6 +10,14 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _http_client: httpx.AsyncClient | None = None
+_geocode_cache: dict[str, dict[str, float]] = {}
+
+OPEN_METEO_BASE_URL = os.getenv("OPEN_METEO_BASE_URL", "https://api.open-meteo.com").rstrip("/")
+OPEN_METEO_GEOCODING_BASE_URL = os.getenv(
+    "OPEN_METEO_GEOCODING_BASE_URL",
+    "https://geocoding-api.open-meteo.com",
+).rstrip("/")
+OPEN_METEO_API_KEY = os.getenv("OPEN_METEO_API_KEY", "").strip()
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -112,11 +121,67 @@ _WMO_CODE_MAP: dict[int, str] = {
 
 
 def get_city_coordinates(city_name: str) -> dict[str, float]:
+    normalized = city_name.strip().lower()
+    if not normalized:
+        logger.warning("Empty city name, using default coordinates (New York)")
+        return _DEFAULT_COORDS
+
     for key, coords in CITY_COORDINATES.items():
-        if key.lower() in city_name.lower() or city_name.lower() in key.lower():
+        key_normalized = key.strip().lower()
+        if key_normalized in normalized or normalized in key_normalized:
             return coords
-    logger.warning("No coordinates found for city '%s', using default (New York)", city_name)
+    logger.warning("No local coordinates found for city '%s', using default (New York)", city_name)
     return _DEFAULT_COORDS
+
+
+async def resolve_city_coordinates(city_name: str, country_code: str | None = None) -> dict[str, float]:
+    fallback = get_city_coordinates(city_name)
+    if fallback != _DEFAULT_COORDS:
+        return fallback
+
+    city = city_name.strip()
+    if not city:
+        return _DEFAULT_COORDS
+
+    cache_key = f"{city.lower()}|{(country_code or '').lower()}"
+    if cache_key in _geocode_cache:
+        return _geocode_cache[cache_key]
+
+    params: dict[str, Any] = {
+        "name": city,
+        "count": 5,
+        "language": "zh",
+        "format": "json",
+    }
+    if country_code and len(country_code) == 2:
+        params["countryCode"] = country_code.upper()
+    if OPEN_METEO_API_KEY:
+        params["apikey"] = OPEN_METEO_API_KEY
+
+    try:
+        client = _get_client()
+        resp = await client.get(f"{OPEN_METEO_GEOCODING_BASE_URL}/v1/search", params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        results = data.get("results")
+        if isinstance(results, list) and results:
+            best = results[0]
+            lat = best.get("latitude")
+            lon = best.get("longitude")
+            if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+                resolved = {"lat": float(lat), "lon": float(lon)}
+                _geocode_cache[cache_key] = resolved
+                logger.info(
+                    "Resolved city '%s' via Open-Meteo geocoding: lat=%s lon=%s",
+                    city_name,
+                    resolved["lat"],
+                    resolved["lon"],
+                )
+                return resolved
+    except Exception as exc:
+        logger.warning("Open-Meteo geocoding failed for '%s': %s", city_name, exc)
+
+    return fallback
 
 
 async def get_forecast(
@@ -126,14 +191,16 @@ async def get_forecast(
     start_date: date | None = None,
 ) -> list[dict[str, Any]]:
     days = min(max(days, 1), 16)
-    url = "https://api.open-meteo.com/v1/forecast"
+    url = f"{OPEN_METEO_BASE_URL}/v1/forecast"
     params: dict[str, Any] = {
         "latitude": lat,
         "longitude": lon,
-        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode",
+        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code",
         "timezone": "auto",
         "forecast_days": days,
     }
+    if OPEN_METEO_API_KEY:
+        params["apikey"] = OPEN_METEO_API_KEY
     if start_date:
         params["start_date"] = start_date.isoformat()
         params["end_date"] = (start_date + timedelta(days=days - 1)).isoformat()
@@ -152,7 +219,7 @@ async def get_forecast(
     temp_max = daily.get("temperature_2m_max", [])
     temp_min = daily.get("temperature_2m_min", [])
     precip = daily.get("precipitation_sum", [])
-    weather_codes = daily.get("weathercode", [])
+    weather_codes = daily.get("weather_code", []) or daily.get("weathercode", [])
 
     results: list[dict[str, Any]] = []
     for i, d in enumerate(dates):

@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, time
 from typing import Any, Optional
 
+from openai import AsyncOpenAI
 from sqlmodel import Session
 
 from agents.attraction_agent import AttractionAgent
@@ -60,6 +61,7 @@ async def run_travel_pipeline(
     status_store: StatusStore,
     llm_config: dict,
     db_session: Session,
+    user_id: str = "anonymous",
     original_task_id: Optional[str] = None,
     user_attachments: Optional[list[dict[str, Any]]] = None,
 ) -> FinalItinerary:
@@ -99,6 +101,29 @@ async def run_travel_pipeline(
         except Exception as exc:
             logger.warning("[task:%s] Failed to load previous itinerary: %s", task_id, exc)
             prev_itinerary = None
+
+    # ── Memory 历史压缩（防止长对话爆上下文）────────────────────────────
+    # Inspired by claude-code's autoCompact: dual trigger (token + msg count),
+    # structured summary prompt, PTL retry with head truncation, circuit breaker.
+    _mem_cfg = llm_config.get("config_list", [{}])
+    _mem_cfg = _mem_cfg[0] if _mem_cfg else {}
+    _mem_client = AsyncOpenAI(
+        api_key=_mem_cfg.get("api_key", get_settings().openai_api_key),
+        base_url=_mem_cfg.get("base_url", get_settings().openai_base_url).rstrip("/"),
+        timeout=60.0,
+        max_retries=0,
+    )
+    _mem_model = _mem_cfg.get("model", get_settings().openai_model)
+    _compact_result = await memory.compress_if_needed(
+        _mem_client, _mem_model,
+        max_history_chars=12_000,
+        keep_recent=5,
+    )
+    if _compact_result["compressed"]:
+        logger.info(
+            "[task:%s] Memory auto-compressed, summary ~%d tokens",
+            task_id, _compact_result["summary_tokens"],
+        )
 
     # ── Phase 1: Intent Parsing ──────────────────────────────────────
     logger.info("[task:%s] Phase 1 — Intent parsing", task_id)
@@ -150,7 +175,10 @@ async def run_travel_pipeline(
     settings = get_settings()
 
     to_currency = _currency_for_country(intent.dest_country_code)
-    coords = weather_service.get_city_coordinates(intent.dest_city)
+    coords = await weather_service.resolve_city_coordinates(
+        intent.dest_city,
+        intent.dest_country_code,
+    )
     dep_date_str = intent.departure_date.isoformat()
     ret_date_str = intent.return_date.isoformat()
 
@@ -590,6 +618,8 @@ async def run_travel_pipeline(
         llm_config=llm_config,
         session_id=session_id,
         previous_itinerary=previous_itinerary_json,
+        user_message=user_message,
+        change_hints=intent.change_hints,
     )
     itinerary: FinalItinerary = await itinerary_agent.run(extra_context={
         "intent": intent,
@@ -615,6 +645,7 @@ async def run_travel_pipeline(
     record = ItineraryRecord(
         task_id=task_id,
         session_id=session_id,
+        user_id=user_id,
         created_at=datetime.utcnow(),
         itinerary_json=itinerary.model_dump_json(),
         origin_city=intent.origin_city,

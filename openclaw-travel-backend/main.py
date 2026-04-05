@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api import chat, conversations, history, itinerary, route, status
+from api import auth, chat, conversations, history, itinerary, route, status
 from config import get_settings
 from core.schemas import HealthResponse
 from database import create_db_and_tables
@@ -100,6 +100,7 @@ def create_app() -> FastAPI:
             content={"detail": str(exc)},
         )
 
+    app.include_router(auth.router, prefix="/api", tags=["Auth"])
     app.include_router(chat.router, prefix="/api", tags=["Chat"])
     app.include_router(status.router, prefix="/api", tags=["Task Status"])
     app.include_router(itinerary.router, prefix="/api", tags=["Itinerary"])

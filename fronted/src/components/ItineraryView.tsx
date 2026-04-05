@@ -40,7 +40,15 @@ export function ItineraryView({
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { setActiveDay(1); }, [itinerary]);
+  const isReplanUpdateRef = useRef(false);
+  useEffect(() => {
+    if (isReplanUpdateRef.current) {
+      // Replan accepted — keep current activeDay, don't reset.
+      isReplanUpdateRef.current = false;
+      return;
+    }
+    setActiveDay(1);
+  }, [itinerary]);
 
   useEffect(() => {
     if (chatEndRef.current && chatHistory.length > 0) {
@@ -166,6 +174,7 @@ export function ItineraryView({
     if (action === 'accepted') {
       const msg = chatHistory[msgIndex];
       if (msg?.pendingResult) {
+        isReplanUpdateRef.current = true;
         onUpdateItinerary(msg.pendingResult);
         setScheduleKey(k => k + 1);
       }

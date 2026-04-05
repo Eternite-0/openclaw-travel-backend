@@ -6,19 +6,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from core.schemas import FinalItinerary, ItinerarySummary
-from core.status_store import StatusStore
-from database import ItineraryRecord, get_session
+from core.security import get_current_user
+from database import ItineraryRecord, UserRecord, get_session
 
 router = APIRouter()
 
 
 @router.get("/tasks", response_model=list[ItinerarySummary])
 async def list_tasks(
+    current_user: UserRecord = Depends(get_current_user),
     db: Session = Depends(get_session),
     limit: int = 50,
 ) -> list[ItinerarySummary]:
     statement = (
         select(ItineraryRecord)
+        .where(ItineraryRecord.user_id == current_user.user_id)
         .order_by(ItineraryRecord.created_at.desc())  # type: ignore[arg-type]
         .limit(limit)
     )
@@ -41,9 +43,14 @@ async def list_tasks(
 @router.delete("/task/{task_id}")
 async def delete_task(
     task_id: str,
+    current_user: UserRecord = Depends(get_current_user),
     db: Session = Depends(get_session),
 ) -> dict:
-    statement = select(ItineraryRecord).where(ItineraryRecord.task_id == task_id)
+    statement = (
+        select(ItineraryRecord)
+        .where(ItineraryRecord.task_id == task_id)
+        .where(ItineraryRecord.user_id == current_user.user_id)
+    )
     record = db.exec(statement).first()
     if record is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found.")
@@ -55,9 +62,14 @@ async def delete_task(
 @router.get("/task/{task_id}/result", response_model=FinalItinerary)
 async def get_task_result(
     task_id: str,
+    current_user: UserRecord = Depends(get_current_user),
     db: Session = Depends(get_session),
 ) -> FinalItinerary:
-    statement = select(ItineraryRecord).where(ItineraryRecord.task_id == task_id)
+    statement = (
+        select(ItineraryRecord)
+        .where(ItineraryRecord.task_id == task_id)
+        .where(ItineraryRecord.user_id == current_user.user_id)
+    )
     record = db.exec(statement).first()
     if record is None:
         raise HTTPException(
