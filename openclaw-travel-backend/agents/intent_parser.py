@@ -21,6 +21,12 @@ w   - "加州" → dest_city="Los Angeles"
    - "北海道" → dest_city="札幌"
    如果用户同时提到了多个城市（如"大理丽江"），选第一个城市作为 dest_city。
 
+【关键规则 — 必须严格遵守】
+1. 所有日期字段（departure_date, return_date）必须使用 ISO 格式 YYYY-MM-DD，**禁止输出空字符串**。
+2. **如果是修改已有行程**：必须从【上一次规划的行程摘要】中继承 departure_date 和 return_date，保持原日期不变，不要重新猜测。
+3. 只有全新规划且用户没提日期时，才基于当前日期推算合理的未来出发日期。
+4. 如果无法确定任何必填字段，输出 {"error": "need_more_info", "message": "需要补充的信息"}。
+
 【上一次规划的行程摘要（若有）】
 {previous_summary}
 
