@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./openclaw.db"
 
     # JWT / Auth
-    auth_enabled: bool = True
+    auth_enabled: bool = False
     jwt_secret_key: str = "CHANGE-ME-to-a-random-secret-in-production"
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30

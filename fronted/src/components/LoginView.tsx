@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { motion } from 'motion/react';
 import { Compass, Eye, EyeOff } from 'lucide-react';
+import { login } from '../api';
 
 interface LoginViewProps {
   onLogin: () => void;
@@ -21,9 +22,22 @@ export function LoginView({ onLogin }: LoginViewProps) {
     }
     setError(null);
     setLoading(true);
-    await new Promise(r => setTimeout(r, 800));
-    setLoading(false);
-    onLogin();
+    try {
+      // Support both email and username login
+      await login({ username: email.trim(), password: password.trim() });
+      onLogin();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '登录失败';
+      // Extract user-friendly message from API error
+      try {
+        const parsed = JSON.parse(msg.split(': ')[1] || '{}');
+        setError(parsed.detail || '邮箱/用户名或密码错误');
+      } catch {
+        setError(msg);
+      }
+    } finally {
+      setLoading(false);
+    }
   }, [email, password, onLogin]);
 
   return (

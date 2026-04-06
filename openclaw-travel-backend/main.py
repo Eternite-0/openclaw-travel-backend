@@ -108,6 +108,13 @@ def create_app() -> FastAPI:
     app.include_router(conversations.router, prefix="/api", tags=["Conversations"])
     app.include_router(route.router, prefix="/api", tags=["Route"])
 
+    @app.get("/api/config", tags=["Config"])
+    async def get_config():
+        """Public configuration for frontend."""
+        return {
+            "auth_enabled": settings.auth_enabled,
+        }
+
     @app.get("/api/health", response_model=HealthResponse, tags=["Health"])
     async def health_check(request: Request) -> HealthResponse:
         redis_status = "disabled"

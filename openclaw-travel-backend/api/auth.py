@@ -107,14 +107,20 @@ async def login(
     body: LoginRequest,
     db: Session = Depends(get_session),
 ) -> TokenResponse:
-    """用户名 + 密码登录。"""
+    """用户名/邮箱 + 密码登录。"""
+    # Try username first, then email
     user = db.exec(
         select(UserRecord).where(UserRecord.username == body.username)
     ).first()
+    if user is None and "@" in body.username:
+        user = db.exec(
+            select(UserRecord).where(UserRecord.email == body.username)
+        ).first()
+    
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户名或密码错误",
+            detail="用户名/邮箱或密码错误",
         )
     if not user.is_active:
         raise HTTPException(

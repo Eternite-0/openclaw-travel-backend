@@ -6,9 +6,10 @@ interface SidebarProps {
   onNavigate: (view: 'home' | 'processing' | 'itinerary' | 'history') => void;
   isOpen?: boolean;
   onClose?: () => void;
+  onLogout?: () => void;
 }
 
-export const Sidebar = memo(function Sidebar({ currentView, onNavigate, isOpen, onClose }: SidebarProps) {
+export const Sidebar = memo(function Sidebar({ currentView, onNavigate, isOpen, onClose, onLogout }: SidebarProps) {
   const handleNavigate = (view: 'home' | 'processing' | 'itinerary' | 'history') => {
     onNavigate(view);
     onClose?.();
@@ -76,6 +77,15 @@ export const Sidebar = memo(function Sidebar({ currentView, onNavigate, isOpen, 
             <UserCog className="w-4 h-4" />
             <span>个人设置</span>
           </button>
+          {onLogout && (
+            <button 
+              onClick={onLogout}
+              className="w-full flex items-center gap-3 px-3 py-2 text-red-500 text-sm hover:bg-red-50 rounded-lg"
+            >
+              <span className="w-4 h-4 flex items-center justify-center">→</span>
+              <span>退出登录</span>
+            </button>
+          )}
         </div>
       </aside>
     </>

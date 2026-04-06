@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { AnimatePresence } from 'motion/react';
 import type { FinalItinerary, RunningTask } from './types';
 import { Header } from './components/Header';
@@ -8,9 +8,32 @@ import { ProcessingView } from './components/ProcessingView';
 import { ItineraryView } from './components/ItineraryView';
 import { HistoryView } from './components/HistoryView';
 import { LoginView } from './components/LoginView';
+import { getTokens, logout, fetchBackendConfig, type BackendConfig } from './api';
 
 export default function App() {
+  const [config, setConfig] = useState<BackendConfig | null>(null);
+  const [configLoading, setConfigLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  // Fetch backend config on mount
+  useEffect(() => {
+    fetchBackendConfig()
+      .then((cfg) => {
+        setConfig(cfg);
+        // If auth disabled, auto-authenticate; otherwise check token
+        if (!cfg.auth_enabled) {
+          setIsAuthenticated(true);
+        } else {
+          setIsAuthenticated(!!getTokens());
+        }
+      })
+      .catch(() => {
+        // No backend? Default to auth disabled (for frontend-only development)
+        setConfig({ auth_enabled: false });
+        setIsAuthenticated(true);
+      })
+      .finally(() => setConfigLoading(false));
+  }, []);
   const [currentView, setCurrentView] = useState<'home' | 'processing' | 'itinerary' | 'history'>('home');
   const [taskId, setTaskId] = useState<string | null>(null);
   const [sessionId] = useState(() => crypto.randomUUID());
@@ -58,6 +81,25 @@ export default function App() {
     setSidebarOpen(false);
   }, []);
 
+  const handleLogout = useCallback(() => {
+    logout();
+    // If auth is enabled, go back to login; otherwise stay (shouldn't happen)
+    if (config?.auth_enabled !== false) {
+      setIsAuthenticated(false);
+    }
+    setCurrentView('home');
+    setItinerary(null);
+    setTaskId(null);
+  }, [config]);
+
+  if (configLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
       <AnimatePresence mode="wait">
@@ -74,6 +116,7 @@ export default function App() {
         onNavigate={setCurrentView} 
         isOpen={sidebarOpen}
         onClose={handleSidebarClose}
+        onLogout={handleLogout}
       />
 
       <AnimatePresence mode="wait">
