@@ -192,6 +192,35 @@ class BaseSpecialistAgent:
             except Exception as exc:
                 logger.warning("Agent %s retry for out_of_scope failed: %s", self.agent_name, exc)
 
+        if parsed.get("error") == "need_more_info":
+            logger.warning("Agent %s got need_more_info, retrying with stronger fallback", self.agent_name)
+            try:
+                retry_completion = await self._client.chat.completions.create(
+                    model=self._model,
+                    temperature=self._temperature,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                        {"role": "assistant", "content": raw_content},
+                        {
+                            "role": "user",
+                            "content": (
+                                "请不要输出 error。请尽量基于已有历史、上一次行程信息和合理默认值补齐字段，"
+                                "严格按 JSON Schema 返回完整结果。"
+                            ),
+                        },
+                    ],
+                )
+                retry_raw = retry_completion.choices[0].message.content or "{}"
+                retry_raw = _extract_json(retry_raw)
+                logger.debug("Agent %s retry for need_more_info response: %s", self.agent_name, retry_raw[:500])
+                try:
+                    parsed = json.loads(retry_raw)
+                except json.JSONDecodeError:
+                    pass
+            except Exception as exc:
+                logger.warning("Agent %s retry for need_more_info failed: %s", self.agent_name, exc)
+
         if "error" in parsed:
             raise ValueError(f"LLM returned error: {parsed['error']}")
 

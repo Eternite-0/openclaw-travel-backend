@@ -13,6 +13,10 @@ _http_client: httpx.AsyncClient | None = None
 _geocode_cache: dict[str, dict[str, float]] = {}
 
 OPEN_METEO_BASE_URL = os.getenv("OPEN_METEO_BASE_URL", "https://api.open-meteo.com").rstrip("/")
+OPEN_METEO_ARCHIVE_BASE_URL = os.getenv(
+    "OPEN_METEO_ARCHIVE_BASE_URL",
+    "https://archive-api.open-meteo.com",
+).rstrip("/")
 OPEN_METEO_GEOCODING_BASE_URL = os.getenv(
     "OPEN_METEO_GEOCODING_BASE_URL",
     "https://geocoding-api.open-meteo.com",
@@ -191,19 +195,45 @@ async def get_forecast(
     start_date: date | None = None,
 ) -> list[dict[str, Any]]:
     days = min(max(days, 1), 16)
-    url = f"{OPEN_METEO_BASE_URL}/v1/forecast"
-    params: dict[str, Any] = {
-        "latitude": lat,
-        "longitude": lon,
-        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code",
-        "timezone": "auto",
-        "forecast_days": days,
-    }
+    today = date.today()
+    base_date = start_date or today
+    end_date = base_date + timedelta(days=days - 1)
+    daily_fields = "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code"
+
+    use_archive = base_date < today
+    forecast_window_end = today + timedelta(days=15)
+    if not use_archive and base_date > forecast_window_end:
+        logger.info(
+            "Open-Meteo forecast window exceeded: start_date=%s > %s, using mock weather",
+            base_date,
+            forecast_window_end,
+        )
+        return _mock_forecast(days, base_date)
+
+    if use_archive:
+        url = f"{OPEN_METEO_ARCHIVE_BASE_URL}/v1/archive"
+        params: dict[str, Any] = {
+            "latitude": lat,
+            "longitude": lon,
+            "daily": daily_fields,
+            "timezone": "auto",
+            "start_date": base_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        }
+    else:
+        url = f"{OPEN_METEO_BASE_URL}/v1/forecast"
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "daily": daily_fields,
+            "timezone": "auto",
+            "forecast_days": days,
+        }
+        if start_date:
+            params["start_date"] = base_date.isoformat()
+            params["end_date"] = end_date.isoformat()
     if OPEN_METEO_API_KEY:
         params["apikey"] = OPEN_METEO_API_KEY
-    if start_date:
-        params["start_date"] = start_date.isoformat()
-        params["end_date"] = (start_date + timedelta(days=days - 1)).isoformat()
 
     try:
         client = _get_client()
@@ -211,8 +241,12 @@ async def get_forecast(
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
-        logger.warning("Open-Meteo API failed: %s — using mock data", exc)
-        return _mock_forecast(days, start_date)
+        logger.warning(
+            "Open-Meteo API failed (%s mode): %s — using mock data",
+            "archive" if use_archive else "forecast",
+            exc,
+        )
+        return _mock_forecast(days, base_date)
 
     daily = data.get("daily", {})
     dates = daily.get("time", [])

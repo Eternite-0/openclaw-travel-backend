@@ -17,7 +17,7 @@ class AttractionAgent(BaseSpecialistAgent):
     SYSTEM_PROMPT_TEMPLATE = """你是"智慧旅行助手"系统中的景点规划专家（AttractionAgent）。
 
 【你的唯一职责】
-为旅行者列出目的地城市的10个顶级景点，覆盖多种类别（地标/博物馆/自然/娱乐/美食）。
+为旅行者列出目的地的10个顶级景点，覆盖多种类别（地标/博物馆/自然/娱乐/美食）。
 
 【约束规则 — 必须严格遵守】
 1. 你只能输出一个合法的 JSON 对象，格式必须完全符合下方 JSON Schema。
@@ -32,6 +32,7 @@ class AttractionAgent(BaseSpecialistAgent):
 10. address 字段必须填写景点的真实地址，优先使用下方实时搜索数据中的地址。
 11. lat/lng 字段必须填写景点的 GCJ-02 坐标（高德/国测局坐标系，小数格式，如 lat=25.0397, lng=102.7193）。注意：GCJ-02 与 GPS(WGS-84) 有微小偏移，你必须输出 GCJ-02 坐标而非 WGS-84，否则地图上会有偏差。坐标必须合理准确，不可随意编造。
 12. 优先参考下方【实时搜索数据】中提到的景点信息，与你的知识融合后生成推荐。
+13. 如果 travel intent 的 special_requests 明确是“多城市线路”，景点应分布在这些城市，不要全部集中在单一城市。
 
 【旅行意图】
 {intent}

@@ -81,6 +81,7 @@ async def run_travel_pipeline(
     prev_itinerary: Optional[FinalItinerary] = None
     previous_summary = ""
     previous_itinerary_json = ""
+    previous_intent_json = ""
 
     prev_record = None
     if original_task_id:
@@ -90,13 +91,16 @@ async def run_travel_pipeline(
         ).first()
         if prev_record:
             logger.info("[task:%s] Found previous itinerary via original_task_id=%s", task_id, original_task_id)
-    if not prev_record:
+    # Important: only follow-up requests are allowed to reuse previous itinerary context.
+    # New planning requests (without original_task_id) must start fresh.
+    if original_task_id and not prev_record:
         prev_record = get_session_last_result(session_id)
     if prev_record:
         try:
             prev_itinerary = FinalItinerary.model_validate_json(prev_record.itinerary_json)
             previous_summary = _build_previous_summary(prev_itinerary)
             previous_itinerary_json = prev_record.itinerary_json[:4000]
+            previous_intent_json = prev_itinerary.intent.model_dump_json(indent=2)
             logger.info("[task:%s] Found previous itinerary for session %s", task_id, session_id)
         except Exception as exc:
             logger.warning("[task:%s] Failed to load previous itinerary: %s", task_id, exc)
@@ -152,16 +156,37 @@ async def run_travel_pipeline(
         user_message=user_message,
         history=history_str,
         previous_summary=previous_summary,
+        previous_intent_json=previous_intent_json,
     )
-    intent: TravelIntent = await intent_agent.run(extra_context={
-        "user_message": user_message,
-        "history": history_str,
-        "previous_summary": previous_summary,
-    })  # type: ignore[assignment]
+    try:
+        intent: TravelIntent = await intent_agent.run(extra_context={
+            "user_message": user_message,
+            "history": history_str,
+            "previous_summary": previous_summary,
+            "previous_intent_json": previous_intent_json,
+        })  # type: ignore[assignment]
+    except ValueError as exc:
+        if "need_more_info" in str(exc) and prev_itinerary is not None:
+            intent = prev_itinerary.intent.model_copy(deep=True)
+            intent.change_hints = ["full"]
+            logger.warning(
+                "[task:%s] intent_parser returned need_more_info, fallback to previous intent for continuity",
+                task_id,
+            )
+            await status_store.update_agent(
+                task_id,
+                "intent_parser",
+                "done",
+                message="信息不足，已基于上次行程继续规划",
+                result_summary=f"{intent.origin_city} → {intent.dest_city}，{intent.duration_days}天",
+            )
+        else:
+            raise
     logger.info(
         "[task:%s] Intent: %s→%s %dd change_hints=%s",
         task_id, intent.origin_city, intent.dest_city, intent.duration_days, intent.change_hints,
     )
+    multi_city_guidance = _apply_multi_city_hints(intent, user_message)
 
     # ── Determine skip set from change_hints ─────────────────────────
     skip_set = _get_skip_set(intent.change_hints, prev_itinerary)
@@ -631,6 +656,7 @@ async def run_travel_pipeline(
         "weather": weather,
         "restaurants": tavily_restaurants_str,
         "previous_itinerary": previous_itinerary_json,
+        "multi_city_guidance": multi_city_guidance,
     })  # type: ignore[assignment]
 
     # Attach optional results
@@ -681,6 +707,32 @@ def _build_previous_summary(itinerary: FinalItinerary) -> str:
         f"推荐酒店: {hotel_info}\n"
         f"亮点: {highlights}"
     )
+
+
+def _apply_multi_city_hints(intent: TravelIntent, user_message: str) -> str:
+    """Inject multi-city guidance for province-level requests (current focus: Yunnan)."""
+    msg = (user_message or "").strip()
+    if not msg:
+        return ""
+
+    # Yunnan usually implies a regional route instead of single-city stay.
+    if ("云南" not in msg) and ("云南" not in intent.dest_city):
+        return ""
+
+    if intent.duration_days >= 7:
+        route = ["昆明", "大理", "丽江", "普洱"]
+    elif intent.duration_days >= 5:
+        route = ["昆明", "大理", "丽江"]
+    else:
+        route = ["昆明", "大理"]
+
+    hint = (
+        f"用户是云南省域游（{intent.duration_days}天），请按多城市线路规划："
+        f"{' -> '.join(route)}；不同城市分配到不同天，包含城际交通安排，避免全程只在单一城市。"
+    )
+    if hint not in intent.special_requests:
+        intent.special_requests.append(hint)
+    return hint
 
 
 def _get_skip_set(change_hints: list[str], prev: Optional[FinalItinerary]) -> set[str]:

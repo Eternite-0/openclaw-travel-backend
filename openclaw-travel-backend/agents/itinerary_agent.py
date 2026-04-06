@@ -71,6 +71,7 @@ class ItineraryAgent(BaseSpecialistAgent):
 2. day_skeletons 必须包含恰好 {duration_days} 天。
 3. 每天的 key_attractions 从景点列表中选取 2-3 个，合理分配避免重复。
 4. 行程安排须考虑：景点地理位置（同区域景点安排在同一天）、天气状况。
+5. 若下方【跨城线路引导】不为空，必须做跨城分配，避免全程仅停留单一城市。
 
 【旅行意图】
 {intent}
@@ -96,6 +97,9 @@ class ItineraryAgent(BaseSpecialistAgent):
 【上一版行程（如有修改请求时参考）】
 {previous_itinerary}
 
+【跨城线路引导（若有）】
+{multi_city_guidance}
+
 【输出 JSON Schema】
 {skeleton_schema}
 
@@ -117,6 +121,7 @@ class ItineraryAgent(BaseSpecialistAgent):
 7. date 格式为 YYYY-MM-DD，从出发日 {departure_date} 开始计算。
 8. 每个 activity 必须包含 lat 和 lng 字段（GCJ-02 高德/国测局坐标系，小数格式）。优先从【景点列表】中复制坐标；如景点列表中无坐标，则根据地址推断合理的 GCJ-02 坐标。坐标用于前端高德地图渲染每日路线，务必准确。
 9. 如果当天行程涉及登山、徒步、骑行等线性路线活动，必须将该活动拆分为 6-8 个沿途关键节点作为独立 activity（如：起点/登山口→山腰休息站→观景台→山顶→下山中途→终点），每个节点都有独立的坐标、时间和描述。这样前端地图才能渲染出完整的路线轨迹，而不是只有起点终点两个点。
+10. 若下方【跨城线路引导】不为空，需把不同城市分配到不同天，并在对应天的 transport_notes 明确写出城际交通方式（高铁/包车/航班等）。
 
 【旅行意图】
 {intent}
@@ -129,6 +134,9 @@ class ItineraryAgent(BaseSpecialistAgent):
 
 【餐厅推荐数据（来自实时搜索）】
 {restaurants}
+
+【跨城线路引导（若有）】
+{multi_city_guidance}
 
 【该批次的骨架信息】
 {batch_skeletons}
@@ -530,6 +538,7 @@ created_at: {created_at}
             attractions=attractions_str,
             weather=weather_str,
             previous_itinerary=previous_itinerary or "（无上一版行程）",
+            multi_city_guidance=context.get("multi_city_guidance", "（无）"),
             skeleton_schema=skeleton_schema,
         )
 
@@ -576,6 +585,7 @@ created_at: {created_at}
                 attractions=attractions_str,
                 weather=weather_str,
                 restaurants=restaurants_str,
+                multi_city_guidance=context.get("multi_city_guidance", "（无）"),
                 batch_skeletons=batch_json,
                 day_batch_schema=day_batch_schema,
             )
@@ -664,6 +674,7 @@ created_at: {created_at}
             attractions=attractions_str,
             weather=weather_str,
             restaurants=restaurants_str,
+            multi_city_guidance="（无）",
             batch_skeletons=batch_json,
             day_batch_schema=day_batch_schema,
         )
