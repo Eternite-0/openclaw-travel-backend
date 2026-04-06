@@ -51,8 +51,20 @@ class UserProfile(BaseModel):
     user_id: str
     username: str
     email: Optional[str]
+    avatar_url: Optional[str]
+    auth_provider: str
     created_at: str
     is_active: bool
+
+
+class UpdateProfileRequest(BaseModel):
+    username: Optional[str] = Field(default=None, min_length=2, max_length=32)
+    email: Optional[str] = None
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str = Field(min_length=6, max_length=128)
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -191,6 +203,76 @@ async def get_me(
         user_id=current_user.user_id,
         username=current_user.username,
         email=current_user.email,
+        avatar_url=current_user.avatar_url,
+        auth_provider=current_user.auth_provider or "password",
         created_at=current_user.created_at.isoformat(),
         is_active=current_user.is_active,
     )
+
+
+@router.patch("/auth/me", response_model=UserProfile)
+async def update_me(
+    body: UpdateProfileRequest,
+    current_user: UserRecord = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> UserProfile:
+    """更新当前用户的用户名或邮箱。"""
+    if body.username and body.username != current_user.username:
+        conflict = db.exec(
+            select(UserRecord).where(UserRecord.username == body.username)
+        ).first()
+        if conflict is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="用户名已被占用")
+        current_user.username = body.username
+
+    if body.email is not None and body.email != current_user.email:
+        if body.email:
+            conflict = db.exec(
+                select(UserRecord).where(UserRecord.email == body.email)
+            ).first()
+            if conflict is not None:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该邮箱已被注册")
+        current_user.email = body.email or None
+
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+
+    logger.info("User %s updated profile", current_user.user_id)
+    return UserProfile(
+        user_id=current_user.user_id,
+        username=current_user.username,
+        email=current_user.email,
+        avatar_url=current_user.avatar_url,
+        auth_provider=current_user.auth_provider or "password",
+        created_at=current_user.created_at.isoformat(),
+        is_active=current_user.is_active,
+    )
+
+
+@router.post("/auth/change-password", status_code=204)
+async def change_password(
+    body: ChangePasswordRequest,
+    current_user: UserRecord = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> None:
+    """验证旧密码后设置新密码。"""
+    if not verify_password(body.old_password, current_user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前密码不正确")
+
+    current_user.password_hash = hash_password(body.new_password)
+    db.add(current_user)
+    db.commit()
+    logger.info("User %s changed password", current_user.user_id)
+
+
+@router.delete("/auth/me", status_code=204)
+async def delete_me(
+    current_user: UserRecord = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> None:
+    """软删除当前账户（is_active=False）。"""
+    current_user.is_active = False
+    db.add(current_user)
+    db.commit()
+    logger.info("User %s deactivated account", current_user.user_id)

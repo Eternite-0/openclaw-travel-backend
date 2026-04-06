@@ -12,6 +12,8 @@ class UserRecord(SQLModel, table=True):
     user_id: str = Field(index=True, unique=True)
     username: str = Field(index=True, unique=True)
     email: Optional[str] = Field(default=None, index=True)
+    avatar_url: Optional[str] = Field(default=None)
+    auth_provider: str = Field(default="password")
     password_hash: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
     is_active: bool = True

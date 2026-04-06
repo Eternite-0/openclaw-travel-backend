@@ -1,19 +1,38 @@
-import { memo } from 'react';
-import { Map as MapIcon, History, PlusCircle, UserCog, X } from 'lucide-react';
+import { memo, useState, useRef, useEffect, useCallback } from 'react';
+import { Map as MapIcon, History, PlusCircle, Settings, LogOut, Globe, HelpCircle, ChevronRight, X } from 'lucide-react';
 
 interface SidebarProps {
   currentView: string;
-  onNavigate: (view: 'home' | 'processing' | 'itinerary' | 'history') => void;
+  onNavigate: (view: 'home' | 'processing' | 'itinerary' | 'history' | 'settings') => void;
   isOpen?: boolean;
   onClose?: () => void;
   onLogout?: () => void;
+  onOpenSettings?: () => void;
+  avatarUrl?: string | null;
+  username?: string;
+  email?: string | null;
 }
 
-export const Sidebar = memo(function Sidebar({ currentView, onNavigate, isOpen, onClose, onLogout }: SidebarProps) {
-  const handleNavigate = (view: 'home' | 'processing' | 'itinerary' | 'history') => {
+export const Sidebar = memo(function Sidebar({ currentView, onNavigate, isOpen, onClose, onLogout, onOpenSettings, avatarUrl, username, email }: SidebarProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const handleNavigate = (view: 'home' | 'processing' | 'itinerary' | 'history' | 'settings') => {
     onNavigate(view);
     onClose?.();
   };
+
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+
+  // Close popup on outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) closeMenu();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen, closeMenu]);
 
   return (
     <>
@@ -72,20 +91,80 @@ export const Sidebar = memo(function Sidebar({ currentView, onNavigate, isOpen, 
             <span className="text-sm">新建任务</span>
           </button>
         </nav>
-        <div className="pt-4 mt-auto space-y-1 border-t border-outline-variant/10">
-          <button className="w-full flex items-center gap-3 px-3 py-2 text-on-surface-variant text-sm hover:bg-surface-container-high rounded-lg">
-            <UserCog className="w-4 h-4" />
-            <span>个人设置</span>
-          </button>
-          {onLogout && (
-            <button 
-              onClick={onLogout}
-              className="w-full flex items-center gap-3 px-3 py-2 text-red-500 text-sm hover:bg-red-50 rounded-lg"
-            >
-              <span className="w-4 h-4 flex items-center justify-center">→</span>
-              <span>退出登录</span>
-            </button>
+
+        {/* Bottom avatar bar + popup */}
+        <div className="mt-auto pt-3 border-t border-outline-variant/10 relative" ref={menuRef}>
+          {/* Popup menu */}
+          {menuOpen && (
+            <div className="absolute bottom-full left-0 right-0 mb-2 mx-1 bg-white rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.12)] border border-outline-variant/15 py-1.5 z-50">
+              {/* Email */}
+              {email && (
+                <div className="px-4 py-2 text-xs text-on-surface-variant truncate border-b border-outline-variant/10 mb-1">
+                  {email}
+                </div>
+              )}
+
+              {/* Settings */}
+              <button
+                onClick={() => { closeMenu(); onOpenSettings?.(); onClose?.(); }}
+                className="w-full flex items-center gap-3 px-4 py-2 text-sm text-on-surface hover:bg-surface-container-low transition-colors"
+              >
+                <Settings className="w-4 h-4 text-on-surface-variant" />
+                <span>个人设置</span>
+              </button>
+
+              {/* Language */}
+              <button
+                className="w-full flex items-center gap-3 px-4 py-2 text-sm text-on-surface hover:bg-surface-container-low transition-colors"
+              >
+                <Globe className="w-4 h-4 text-on-surface-variant" />
+                <span className="flex-1 text-left">语言</span>
+                <ChevronRight className="w-3.5 h-3.5 text-outline" />
+              </button>
+
+              {/* Get help */}
+              <button
+                className="w-full flex items-center gap-3 px-4 py-2 text-sm text-on-surface hover:bg-surface-container-low transition-colors"
+              >
+                <HelpCircle className="w-4 h-4 text-on-surface-variant" />
+                <span>获取帮助</span>
+              </button>
+
+              {/* Logout */}
+              {onLogout && (
+                <>
+                  <div className="my-1 border-t border-outline-variant/10" />
+                  <button
+                    onClick={() => { closeMenu(); onLogout(); }}
+                    className="w-full flex items-center gap-3 px-4 py-2 text-sm text-on-surface hover:bg-surface-container-low transition-colors"
+                  >
+                    <LogOut className="w-4 h-4 text-on-surface-variant" />
+                    <span>登出</span>
+                  </button>
+                </>
+              )}
+            </div>
           )}
+
+          {/* Avatar bar trigger */}
+          <button
+            onClick={() => setMenuOpen((o) => !o)}
+            className="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-surface-container-high transition-colors"
+          >
+            <div className="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center overflow-hidden shrink-0">
+              {avatarUrl ? (
+                <img src={avatarUrl} alt={username ?? 'User'} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              ) : (
+                <span className="text-xs font-bold text-primary">
+                  {(username ?? 'U').charAt(0).toUpperCase()}
+                </span>
+              )}
+            </div>
+            <div className="min-w-0 text-left">
+              <p className="text-sm font-medium text-on-surface truncate">{username || '用户'}</p>
+              <p className="text-[10px] text-outline truncate">个人账户</p>
+            </div>
+          </button>
         </div>
       </aside>
     </>

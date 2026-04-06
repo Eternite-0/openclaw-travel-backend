@@ -1,6 +1,5 @@
 import { memo } from 'react';
-import { Bell, Settings, Menu } from 'lucide-react';
-import avatarImg from '../../images/avatar.jpg';
+import { Menu } from 'lucide-react';
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -24,15 +23,6 @@ export const Header = memo(function Header({ onMenuClick }: HeaderProps) {
         <div className="hidden md:flex items-center bg-surface-container-low px-4 py-1.5 rounded-full">
           <span className="text-sm font-medium text-primary">OpenClaw Travel Planner</span>
           <span className="ml-2 text-[9px] font-bold bg-primary text-on-primary px-1.5 py-0.5 rounded uppercase tracking-wider">Alpha</span>
-        </div>
-      </div>
-      <div className="flex items-center gap-3 md:gap-6">
-        <div className="flex items-center gap-3 md:gap-4 text-on-surface-variant">
-          <Bell className="w-5 h-5 cursor-pointer hover:text-on-surface transition-colors" />
-          <Settings className="hidden sm:block w-5 h-5 cursor-pointer hover:text-on-surface transition-colors" />
-        </div>
-        <div className="h-8 w-8 rounded-full bg-surface-container-highest flex items-center justify-center overflow-hidden">
-          <img src={avatarImg} alt="User" className="h-full w-full object-cover" />
         </div>
       </div>
     </header>

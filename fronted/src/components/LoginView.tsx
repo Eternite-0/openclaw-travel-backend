@@ -1,30 +1,98 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Compass, Eye, EyeOff } from 'lucide-react';
-import { login } from '../api';
+import { login, register, saveTokens } from '../api';
 
 interface LoginViewProps {
   onLogin: () => void;
 }
 
 export function LoginView({ onLogin }: LoginViewProps) {
+  const [mode, setMode] = useState<'login' | 'register'>('login');
   const [showPassword, setShowPassword] = useState(false);
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
+  const [username, setUsername] = useState('');
+  const [registerEmail, setRegisterEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState<'google' | 'wechat' | null>(null);
+
+  // Listen for postMessage from OAuth popup
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type === 'oauth_success') {
+        saveTokens({
+          access_token: data.access_token,
+          refresh_token: data.refresh_token,
+          user_id: data.user_id,
+          username: data.username,
+        });
+        setOauthLoading(null);
+        onLogin();
+      } else if (data.type === 'oauth_error') {
+        setError(data.error || 'OAuth 登录失败');
+        setOauthLoading(null);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [onLogin]);
+
+  const handleOAuthLogin = useCallback((provider: 'google' | 'wechat') => {
+    setError(null);
+    const url = `/api/auth/oauth/${provider}`;
+    const w = 500, h = 620;
+    const left = Math.round(window.screenX + (window.outerWidth - w) / 2);
+    const top = Math.round(window.screenY + (window.outerHeight - h) / 2);
+    const popup = window.open(url, `${provider}-oauth`, `width=${w},height=${h},left=${left},top=${top},scrollbars=yes`);
+    if (!popup) {
+      setError('弹窗被浏览器阻止，请允许弹窗后重试');
+      return;
+    }
+    setOauthLoading(provider);
+    // Detect if popup was closed without completing OAuth
+    const timer = setInterval(() => {
+      if (popup.closed) {
+        clearInterval(timer);
+        setOauthLoading((cur) => {
+          if (cur === provider) setError('登录已取消');
+          return null;
+        });
+      }
+    }, 600);
+  }, []);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim() || !password.trim()) {
-      setError('请填写邮箱和密码');
+    if (mode === 'login' && (!identifier.trim() || !password.trim())) {
+      setError('请填写邮箱/用户名和密码');
       return;
     }
+    if (mode === 'register' && (!username.trim() || !password.trim())) {
+      setError('请填写用户名和密码');
+      return;
+    }
+    if (mode === 'register' && password !== confirmPassword) {
+      setError('两次输入的密码不一致');
+      return;
+    }
+
     setError(null);
     setLoading(true);
     try {
-      // Support both email and username login
-      await login({ username: email.trim(), password: password.trim() });
+      if (mode === 'login') {
+        await login({ username: identifier.trim(), password: password.trim() });
+      } else {
+        await register({
+          username: username.trim(),
+          password: password.trim(),
+          email: registerEmail.trim() || undefined,
+        });
+      }
       onLogin();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '登录失败';
@@ -38,7 +106,17 @@ export function LoginView({ onLogin }: LoginViewProps) {
     } finally {
       setLoading(false);
     }
-  }, [email, password, onLogin]);
+  }, [mode, identifier, username, registerEmail, password, confirmPassword, onLogin]);
+
+  const switchToLogin = useCallback(() => {
+    setMode('login');
+    setError(null);
+  }, []);
+
+  const switchToRegister = useCallback(() => {
+    setMode('register');
+    setError(null);
+  }, []);
 
   return (
     <motion.div
@@ -101,31 +179,68 @@ export function LoginView({ onLogin }: LoginViewProps) {
                   <h1 className="font-headline font-black text-xl tracking-tighter">OpenTrip</h1>
                 </div>
                 <h2 className="font-headline text-2xl font-bold text-on-surface mb-1">
-                  Welcome back
+                  {mode === 'login' ? 'Welcome back' : 'Create account'}
                 </h2>
                 <p className="text-on-surface-variant text-sm font-medium">
-                  Digital Concierge Access
+                  {mode === 'login' ? 'Digital Concierge Access' : 'Join OpenTrip Concierge'}
                 </p>
               </header>
 
               {/* Form */}
               <form className="space-y-5" onSubmit={handleSubmit}>
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="email"
-                    className="font-label text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider px-1"
-                  >
-                    Email Address
-                  </label>
-                  <input
-                    id="email"
-                    type="email"
-                    placeholder="alex@concierge.com"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    className="w-full h-12 px-4 rounded-xl bg-white/50 border border-white/40 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-all text-on-surface text-sm placeholder:text-outline-variant"
-                  />
-                </div>
+                {mode === 'login' ? (
+                  <div className="space-y-1.5">
+                    <label
+                      htmlFor="identifier"
+                      className="font-label text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider px-1"
+                    >
+                      Email Or Username
+                    </label>
+                    <input
+                      id="identifier"
+                      type="text"
+                      placeholder="alex@concierge.com / alex"
+                      value={identifier}
+                      onChange={e => setIdentifier(e.target.value)}
+                      className="w-full h-12 px-4 rounded-xl bg-white/50 border border-white/40 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-all text-on-surface text-sm placeholder:text-outline-variant"
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-1.5">
+                      <label
+                        htmlFor="username"
+                        className="font-label text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider px-1"
+                      >
+                        Username
+                      </label>
+                      <input
+                        id="username"
+                        type="text"
+                        placeholder="alex"
+                        value={username}
+                        onChange={e => setUsername(e.target.value)}
+                        className="w-full h-12 px-4 rounded-xl bg-white/50 border border-white/40 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-all text-on-surface text-sm placeholder:text-outline-variant"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label
+                        htmlFor="register-email"
+                        className="font-label text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider px-1"
+                      >
+                        Email (Optional)
+                      </label>
+                      <input
+                        id="register-email"
+                        type="email"
+                        placeholder="alex@concierge.com"
+                        value={registerEmail}
+                        onChange={e => setRegisterEmail(e.target.value)}
+                        className="w-full h-12 px-4 rounded-xl bg-white/50 border border-white/40 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-all text-on-surface text-sm placeholder:text-outline-variant"
+                      />
+                    </div>
+                  </>
+                )}
 
                 <div className="space-y-1.5">
                   <div className="flex justify-between items-end px-1">
@@ -140,7 +255,7 @@ export function LoginView({ onLogin }: LoginViewProps) {
                       className="text-[11px] font-medium text-primary-dim hover:text-primary transition-colors"
                       onClick={e => e.preventDefault()}
                     >
-                      Forgot Password?
+                      {mode === 'login' ? 'Forgot Password?' : 'Password Rule: >= 6 chars'}
                     </a>
                   </div>
                   <div className="relative">
@@ -165,6 +280,25 @@ export function LoginView({ onLogin }: LoginViewProps) {
                   </div>
                 </div>
 
+                {mode === 'register' && (
+                  <div className="space-y-1.5">
+                    <label
+                      htmlFor="confirm-password"
+                      className="font-label text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider px-1"
+                    >
+                      Confirm Password
+                    </label>
+                    <input
+                      id="confirm-password"
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="••••••••"
+                      value={confirmPassword}
+                      onChange={e => setConfirmPassword(e.target.value)}
+                      className="w-full h-12 px-4 rounded-xl bg-white/50 border border-white/40 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-all text-on-surface text-sm placeholder:text-outline-variant"
+                    />
+                  </div>
+                )}
+
                 {error && (
                   <p className="text-xs text-red-500 font-medium px-1">{error}</p>
                 )}
@@ -178,7 +312,7 @@ export function LoginView({ onLogin }: LoginViewProps) {
                     <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none">
                       <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="31.4" strokeDashoffset="10" strokeLinecap="round" />
                     </svg>
-                  ) : 'Login'}
+                  ) : mode === 'login' ? 'Login' : 'Create Account'}
                 </button>
               </form>
 
@@ -195,20 +329,29 @@ export function LoginView({ onLogin }: LoginViewProps) {
               <div className="grid grid-cols-2 gap-4">
                 <button
                   type="button"
-                  className="flex items-center justify-center gap-2 h-11 rounded-xl bg-white/50 border border-white/40 hover:bg-white transition-colors group"
+                  onClick={() => handleOAuthLogin('google')}
+                  disabled={oauthLoading !== null}
+                  className="flex items-center justify-center gap-2 h-11 rounded-xl bg-white/50 border border-white/40 hover:bg-white transition-colors group disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24">
-                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
-                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
-                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05" />
-                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
-                  </svg>
+                  {oauthLoading === 'google' ? (
+                    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="31.4" strokeDashoffset="10" strokeLinecap="round" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" viewBox="0 0 24 24">
+                      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+                      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+                      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05" />
+                      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+                    </svg>
+                  )}
                   <span className="text-xs font-semibold text-on-surface-variant group-hover:text-on-surface">
                     Google
                   </span>
                 </button>
                 <button
                   type="button"
+                  onClick={() => setError('暂不支持该方式登录')}
                   className="flex items-center justify-center gap-2 h-11 rounded-xl bg-white/50 border border-white/40 hover:bg-white transition-colors group"
                 >
                   <svg className="w-5 h-5" fill="#07C160" viewBox="0 0 24 24">
@@ -222,14 +365,24 @@ export function LoginView({ onLogin }: LoginViewProps) {
 
               <footer className="mt-10 text-center">
                 <p className="text-[11px] text-on-surface-variant font-medium">
-                  Don't have an account?{' '}
-                  <a
-                    href="#"
-                    onClick={e => e.preventDefault()}
-                    className="text-primary font-bold hover:underline"
-                  >
-                    Join as a Planner
-                  </a>
+                  {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
+                  {mode === 'login' ? (
+                    <button
+                      type="button"
+                      onClick={switchToRegister}
+                      className="text-primary font-bold hover:underline"
+                    >
+                      Join as a Planner
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={switchToLogin}
+                      className="text-primary font-bold hover:underline"
+                    >
+                      Back to Login
+                    </button>
+                  )}
                 </p>
               </footer>
             </div>

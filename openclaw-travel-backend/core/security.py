@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt as _bcrypt
 from sqlmodel import Session, select
 
 from config import get_settings
@@ -15,16 +15,20 @@ from database import UserRecord, get_session
 
 logger = logging.getLogger(__name__)
 
-# ── Password hashing ────────────────────────────────────────────────────────
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
+# ── Password hashing ─────────────────────────────────────────────────────────
+# Use bcrypt directly to avoid passlib 1.7.x incompatibility with bcrypt 4.x.
+# bcrypt has a hard 72-byte limit; we truncate explicitly so hashing never fails.
 
 def hash_password(plain: str) -> str:
-    return pwd_context.hash(plain)
+    raw = plain.encode("utf-8")[:72]
+    return _bcrypt.hashpw(raw, _bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    try:
+        return _bcrypt.checkpw(plain.encode("utf-8")[:72], hashed.encode("utf-8"))
+    except Exception:
+        return False
 
 
 # ── JWT token helpers ────────────────────────────────────────────────────────

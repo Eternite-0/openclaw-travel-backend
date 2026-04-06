@@ -5,6 +5,8 @@ export const API_BASE = '/api';
 // ── Backend Config ───────────────────────────────────────────────────────────
 export interface BackendConfig {
   auth_enabled: boolean;
+  google_oauth_enabled?: boolean;
+  wechat_oauth_enabled?: boolean;
 }
 
 export async function fetchBackendConfig(): Promise<BackendConfig> {
@@ -242,12 +244,58 @@ export async function refreshToken(): Promise<TokenResponse> {
   return data;
 }
 
-export async function fetchUserProfile() {
+export interface UserProfile {
+  user_id: string;
+  username: string;
+  email: string | null;
+  avatar_url: string | null;
+  auth_provider: string;
+  created_at: string;
+  is_active: boolean;
+}
+
+export async function fetchUserProfile(): Promise<UserProfile> {
   const res = await fetch(`${API_BASE}/auth/me`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) throw new Error(`获取用户信息失败 (${res.status})`);
   return res.json();
+}
+
+export async function updateUserProfile(data: { username?: string; email?: string }): Promise<UserProfile> {
+  const res = await fetch(`${API_BASE}/auth/me`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => res.statusText);
+    throw new Error(`更新资料失败 (${res.status}): ${txt}`);
+  }
+  return res.json();
+}
+
+export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/auth/change-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => res.statusText);
+    throw new Error(`密码修改失败 (${res.status}): ${txt}`);
+  }
+}
+
+export async function deleteAccount(): Promise<void> {
+  const res = await fetch(`${API_BASE}/auth/me`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => res.statusText);
+    throw new Error(`注销账户失败 (${res.status}): ${txt}`);
+  }
 }
 
 export function logout() {

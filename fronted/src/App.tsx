@@ -8,19 +8,22 @@ import { ProcessingView } from './components/ProcessingView';
 import { ItineraryView } from './components/ItineraryView';
 import { HistoryView } from './components/HistoryView';
 import { LoginView } from './components/LoginView';
-import { getTokens, logout, fetchBackendConfig, type BackendConfig } from './api';
+import { SettingsView } from './components/SettingsView';
+import { getTokens, logout, fetchBackendConfig, fetchUserProfile, type BackendConfig } from './api';
 
 export default function App() {
   const [config, setConfig] = useState<BackendConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [displayUsername, setDisplayUsername] = useState<string>('');
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   // Fetch backend config on mount
   useEffect(() => {
     fetchBackendConfig()
       .then((cfg) => {
         setConfig(cfg);
-        // If auth disabled, auto-authenticate; otherwise check token
         if (!cfg.auth_enabled) {
           setIsAuthenticated(true);
         } else {
@@ -28,13 +31,23 @@ export default function App() {
         }
       })
       .catch(() => {
-        // No backend? Default to auth disabled (for frontend-only development)
         setConfig({ auth_enabled: false });
         setIsAuthenticated(true);
       })
       .finally(() => setConfigLoading(false));
   }, []);
-  const [currentView, setCurrentView] = useState<'home' | 'processing' | 'itinerary' | 'history'>('home');
+
+  // Sync user profile (avatar + username) whenever authenticated
+  useEffect(() => {
+    if (!isAuthenticated) { setAvatarUrl(null); setDisplayUsername(''); setUserEmail(null); return; }
+    // Immediately show username from token while profile loads
+    const tokens = getTokens();
+    if (tokens?.username) setDisplayUsername(tokens.username);
+    fetchUserProfile()
+      .then((p) => { setAvatarUrl(p.avatar_url); setDisplayUsername(p.username); setUserEmail(p.email); })
+      .catch(() => {});
+  }, [isAuthenticated]);
+  const [currentView, setCurrentView] = useState<'home' | 'processing' | 'itinerary' | 'history' | 'settings'>('home');
   const [taskId, setTaskId] = useState<string | null>(null);
   const [sessionId] = useState(() => crypto.randomUUID());
   const [itinerary, setItinerary] = useState<FinalItinerary | null>(null);
@@ -77,6 +90,11 @@ export default function App() {
     setSidebarOpen(true);
   }, []);
 
+  const handleOpenSettings = useCallback(() => {
+    setSidebarOpen(false);
+    setCurrentView('settings');
+  }, []);
+
   const handleSidebarClose = useCallback(() => {
     setSidebarOpen(false);
   }, []);
@@ -108,6 +126,14 @@ export default function App() {
     );
   }
 
+  if (currentView === 'settings') {
+    return (
+      <AnimatePresence mode="wait">
+        <SettingsView key="settings" onBack={() => setCurrentView('home')} onLogout={handleLogout} />
+      </AnimatePresence>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-surface text-on-surface font-sans selection:bg-primary-container selection:text-on-primary-container">
       <Header onMenuClick={handleMenuClick} />
@@ -116,7 +142,11 @@ export default function App() {
         onNavigate={setCurrentView} 
         isOpen={sidebarOpen}
         onClose={handleSidebarClose}
-        onLogout={handleLogout}
+        onLogout={config?.auth_enabled ? handleLogout : undefined}
+        onOpenSettings={handleOpenSettings}
+        avatarUrl={avatarUrl}
+        username={displayUsername}
+        email={userEmail}
       />
 
       <AnimatePresence mode="wait">

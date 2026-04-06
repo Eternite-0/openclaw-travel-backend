@@ -32,6 +32,16 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     max_short_term_memory: int = 10
 
+    # OAuth — Google
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_oauth_enabled: bool = False
+
+    # Base URL of the app as seen by end-users (used to build OAuth redirect_uri)
+    # In dev: http://localhost:3000 (Vite dev server, which proxies /api to backend)
+    # In prod: set to your actual domain, e.g. https://app.example.com
+    app_base_url: str = "http://localhost:3000"
+
     serpapi_key: str = ""
     serpapi_enabled: bool = True
 

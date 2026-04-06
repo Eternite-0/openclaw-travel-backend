@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api import auth, chat, conversations, history, itinerary, route, status
+from api import auth, chat, conversations, history, itinerary, oauth, route, status
 from config import get_settings
 from core.schemas import HealthResponse
 from database import create_db_and_tables
@@ -29,6 +29,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     create_db_and_tables()
     logger.info("SQLite tables created/verified")
+
+    # Lightweight column migrations for existing databases
+    from database import get_engine
+    from sqlalchemy import text
+    with get_engine().connect() as conn:
+        for col, definition in [("avatar_url", "TEXT"), ("auth_provider", "TEXT DEFAULT 'password'")]:
+            try:
+                conn.execute(text(f"ALTER TABLE user ADD COLUMN {col} {definition}"))
+                conn.commit()
+                logger.info("Migration: added column user.%s", col)
+            except Exception:
+                pass  # Column already exists
 
     redis_client = None
     if settings.redis_enabled:
@@ -107,12 +119,14 @@ def create_app() -> FastAPI:
     app.include_router(history.router, prefix="/api", tags=["Session History"])
     app.include_router(conversations.router, prefix="/api", tags=["Conversations"])
     app.include_router(route.router, prefix="/api", tags=["Route"])
+    app.include_router(oauth.router, prefix="/api", tags=["OAuth"])
 
     @app.get("/api/config", tags=["Config"])
     async def get_config():
         """Public configuration for frontend."""
         return {
             "auth_enabled": settings.auth_enabled,
+            "google_oauth_enabled": settings.google_oauth_enabled and bool(settings.google_client_id),
         }
 
     @app.get("/api/health", response_model=HealthResponse, tags=["Health"])
