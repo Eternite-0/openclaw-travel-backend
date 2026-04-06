@@ -6,6 +6,7 @@ import {
   Share, Sun, ThumbsUp, Train, Hotel, Clock, Wallet,
   Mountain, Network, User, Bot, Loader2,
   Plus, ArrowUp, X, Mic, SlidersHorizontal, ChevronDown, Check,
+  ShoppingCart, PlaneTakeoff, Building2,
 } from 'lucide-react';
 import type { FinalItinerary, ChatMsg, Conversation } from '../types';
 import {
@@ -371,7 +372,7 @@ function BookingSidebar({ itinerary, title, paymentState, onPayment }: {
         className="xl:hidden fixed right-4 bottom-24 z-30 w-12 h-12 bg-primary text-white rounded-full shadow-lg flex items-center justify-center"
         aria-label="打开预订侧边栏"
       >
-        <Wallet className="w-5 h-5" />
+        <ShoppingCart className="w-5 h-5" />
       </button>
 
       {/* Mobile Overlay */}
@@ -384,8 +385,8 @@ function BookingSidebar({ itinerary, title, paymentState, onPayment }: {
       )}
 
       <aside className={`
-        fixed right-0 top-16 h-[calc(100vh-64px)] w-full sm:w-[320px] xl:w-[300px] bg-surface-container-low 
-        flex flex-col p-4 md:p-6 space-y-4 md:space-y-6 z-40 border-l border-outline-variant/20
+        fixed right-0 top-16 h-[calc(100vh-64px)] w-full sm:w-[360px] xl:w-[360px] 
+        flex flex-col z-40
         transition-transform duration-300 ease-in-out
         xl:translate-x-0
         ${isOpen ? 'translate-x-0' : 'translate-x-full xl:translate-x-0'}
@@ -393,90 +394,160 @@ function BookingSidebar({ itinerary, title, paymentState, onPayment }: {
         {/* Mobile Close Button */}
         <button
           onClick={() => setIsOpen(false)}
-          className="xl:hidden absolute top-3 right-3 p-1.5 rounded-lg hover:bg-surface-container-high text-on-surface-variant"
+          className="xl:hidden absolute top-3 right-3 p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 z-50"
           aria-label="关闭预订侧边栏"
         >
           <X className="w-4 h-4" />
         </button>
 
-        <header className="mt-2">
-          <h2 className="text-lg font-bold text-on-surface">确认预订</h2>
-          <p className="text-[10px] uppercase tracking-widest text-on-surface-variant mt-1">{title}</p>
-        </header>
-        <div className="flex text-[10px] font-bold uppercase tracking-widest border-b border-surface-container-high">
-          <button className="flex-1 pb-3 text-primary border-b-2 border-primary">交通</button>
-          <button className="flex-1 pb-3 text-on-surface-variant hover:text-primary">酒店</button>
-          <button className="flex-1 pb-3 text-on-surface-variant hover:text-primary">门票</button>
-        </div>
-        <div className="space-y-4 md:space-y-6 flex-grow overflow-y-auto">
-          <div>
-            <label className="text-[10px] font-bold text-outline uppercase tracking-wider">产品信息</label>
-            <div className="mt-2 p-3 bg-surface-container-lowest rounded-lg shadow-sm border border-outline-variant/10">
-              {itinerary?.recommended_flight ? (
-                <>
-                  <p className="text-sm font-bold text-on-surface">
-                    {itinerary.intent.origin_city} → {itinerary.intent.dest_city}
-                  </p>
-                  <p className="text-xs text-on-surface-variant mt-1">
-                    {itinerary.recommended_flight.airline} {itinerary.recommended_flight.flight_number}
-                  </p>
-                  <div className="flex justify-between mt-3 text-[10px] font-medium text-outline">
-                    <span>{formatDT(itinerary.recommended_flight.departure_time)} 出发</span>
-                    <span>约 {itinerary.recommended_flight.duration_hours.toFixed(1)}h</span>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="text-sm font-bold text-on-surface">昆明南 - 大理</p>
-                  <p className="text-xs text-on-surface-variant mt-1">G2842 | 高铁二等座</p>
-                  <div className="flex justify-between mt-3 text-[10px] font-medium text-outline">
-                    <span>10月12日 09:30出发</span>
-                    <span>耗时 2h 05m</span>
-                  </div>
-                </>
-              )}
+        {/* Main Card Container */}
+        <div className="m-0 xl:m-4 bg-white border border-slate-100 shadow-[0_8px_32px_rgba(0,0,0,0.04)] rounded-none xl:rounded-2xl h-full flex flex-col overflow-hidden">
+          {/* Header */}
+          <div className="flex justify-between items-center p-6 pb-4">
+            <h2 className="text-xl font-headline font-extrabold tracking-tight text-slate-900">确认预订</h2>
+            <ShoppingCart className="w-5 h-5 text-slate-400" />
+          </div>
+
+          {/* Scrollable Content */}
+          <div className="flex-1 overflow-y-auto px-6 pb-4 space-y-6">
+            {/* Flight Detail */}
+            <div className="group">
+              <span className="text-[10px] font-label font-bold text-slate-400 uppercase tracking-[0.1em] mb-3 block">
+                航班详情
+              </span>
+              <div className="flex gap-4 items-start">
+                <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center flex-shrink-0">
+                  <PlaneTakeoff className="w-6 h-6 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  {itinerary?.recommended_flight ? (
+                    <>
+                      <h4 className="font-headline font-bold text-sm text-slate-900 truncate">
+                        {itinerary.recommended_flight.airline} {itinerary.recommended_flight.flight_number}
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-1">
+                        {itinerary.intent.origin_city} → {itinerary.intent.dest_city}
+                      </p>
+                      <div className="flex justify-between mt-2 pt-2 border-t border-slate-50">
+                        <span className="text-[11px] text-slate-500">{formatDT(itinerary.recommended_flight.departure_time)}</span>
+                        <span className="text-[11px] font-bold text-slate-900">
+                          ¥{Math.round(itinerary.recommended_flight.price_cny).toLocaleString()}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <h4 className="font-headline font-bold text-sm text-slate-900">中国东方航空 MU5738</h4>
+                      <p className="text-xs text-slate-400 mt-1">湛江 (ZHA) → 巴黎 (CDG)</p>
+                      <div className="flex justify-between mt-2 pt-2 border-t border-slate-50">
+                        <span className="text-[11px] text-slate-500">经济舱优惠价</span>
+                        <span className="text-[11px] font-bold text-slate-900">¥10,280.00</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Hotel Detail */}
+            <div className="group">
+              <span className="text-[10px] font-label font-bold text-slate-400 uppercase tracking-[0.1em] mb-3 block">
+                住宿安排
+              </span>
+              <div className="flex gap-4 items-start">
+                <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center flex-shrink-0">
+                  <Building2 className="w-6 h-6 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  {itinerary?.recommended_hotel ? (
+                    <>
+                      <h4 className="font-headline font-bold text-sm text-slate-900 truncate">
+                        {itinerary.recommended_hotel.name}
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-1">
+                        {itinerary.days.length}晚
+                      </p>
+                      <div className="flex justify-between mt-2 pt-2 border-t border-slate-50">
+                        <span className="text-[11px] text-slate-500">含早餐</span>
+                        <span className="text-[11px] font-bold text-slate-900">
+                          ¥{Math.round(itinerary.recommended_hotel.price_per_night_cny * itinerary.days.length).toLocaleString()}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <h4 className="font-headline font-bold text-sm text-slate-900">巴黎奥特伊假日酒店</h4>
+                      <p className="text-xs text-slate-400 mt-1">豪华大床房 • 6晚</p>
+                      <div className="flex justify-between mt-2 pt-2 border-t border-slate-50">
+                        <span className="text-[11px] text-slate-500">含早餐</span>
+                        <span className="text-[11px] font-bold text-slate-900">¥7,080.00</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Passengers */}
+            <div className="group">
+              <div className="flex justify-between items-center mb-3">
+                <span className="text-[10px] font-label font-bold text-slate-400 uppercase tracking-[0.1em] block">
+                  旅客
+                </span>
+                <button className="text-[10px] font-bold text-primary flex items-center gap-1 hover:underline">
+                  <Plus className="w-3 h-3" />
+                  新增旅客
+                </button>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-3 px-3 py-2 bg-slate-50 rounded-lg">
+                  <User className="w-4 h-4 text-slate-400" />
+                  <span className="text-xs font-medium text-slate-700">张某某 (主要联系人)</span>
+                </div>
+              </div>
             </div>
           </div>
-          <div>
-            <label className="text-[10px] font-bold text-outline uppercase tracking-wider">乘车人</label>
-            <div className="mt-2 flex items-center gap-3 p-3 bg-surface-container-lowest rounded-lg shadow-sm border border-outline-variant/10">
-              <User className="w-4 h-4 text-outline" />
-              <span className="text-sm font-medium text-on-surface">张某某 (4201**********)</span>
+
+          {/* Footer - Price & CTA */}
+          <div className="mt-auto pt-6 px-6 pb-6 border-t border-slate-100 bg-white">
+            <div className="flex justify-between items-end mb-6">
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">总计费用</span>
+                <div className="text-3xl font-headline font-extrabold text-slate-900 mt-1">
+                  ¥{itinerary ? Math.round(itinerary.total_estimated_cost_cny).toLocaleString() : '17,360'}
+                </div>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] text-slate-400">含税费</span>
+              </div>
             </div>
-          </div>
-          <div className="bg-secondary-container/50 p-3 md:p-4 rounded-xl border border-secondary-container/30">
-            <div className="flex items-center gap-2 mb-2">
-              <Bot className="w-4 h-4 text-on-secondary-container" />
-              <span className="text-[10px] font-bold text-on-secondary-container uppercase tracking-wider">AI 助手建议</span>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setIsOpen(false)}
+                className="flex-1 bg-slate-100 text-slate-600 py-3.5 rounded-xl font-headline font-bold text-sm hover:bg-slate-200 transition-all"
+              >
+                取消
+              </button>
+              <button
+                onClick={onPayment}
+                disabled={paymentState !== 'idle'}
+                className={`flex-[2] py-3.5 rounded-xl font-headline font-bold text-sm transition-all ${
+                  paymentState === 'success' 
+                    ? 'bg-emerald-500 text-white shadow-emerald-500/20' 
+                    : 'bg-primary text-white shadow-xl shadow-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                {paymentState === 'idle' 
+                  ? '确认支付' 
+                  : paymentState === 'processing' 
+                    ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> 
+                    : '支付成功'
+                }
+              </button>
             </div>
-            <p className="text-xs text-on-secondary-container leading-relaxed">
-              {itinerary?.travel_tips?.[0] ?? '当前列车余票充足，建议提前 24 小时预订以锁定最佳座位。由于大理天气转晴，系统已为您自动勾选"靠窗席位"。'}
+            <p className="text-[10px] text-center text-slate-400 mt-4 px-4 leading-relaxed">
+              点击确认即表示您同意我们的旅行政策及供应商服务条款。
             </p>
-          </div>
-        </div>
-        <div className="space-y-3 md:space-y-4 pt-3 md:pt-4 border-t border-outline-variant/10">
-          <div className="flex justify-between items-end">
-            <span className="text-xs font-medium text-on-surface-variant">总计费用</span>
-            <span className="text-xl md:text-2xl font-black text-primary">
-              ¥ {itinerary ? Math.round(itinerary.total_estimated_cost_cny).toLocaleString() : '1200'}
-            </span>
-          </div>
-          <div className="flex gap-3">
-            <button 
-              onClick={() => setIsOpen(false)}
-              className="flex-1 py-3 text-sm font-bold text-primary bg-surface-container-high rounded-xl hover:bg-surface-container-highest transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={onPayment}
-              disabled={paymentState !== 'idle'}
-              className={`flex-[2] py-3 text-sm font-bold text-on-primary rounded-xl shadow-lg transition-all ${
-                paymentState === 'success' ? 'bg-emerald-500 shadow-emerald-500/20' : 'bg-primary shadow-primary/20 hover:opacity-90'
-              }`}
-            >
-              {paymentState === 'idle' ? '确认支付' : paymentState === 'processing' ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : '支付成功'}
-            </button>
           </div>
         </div>
       </aside>
