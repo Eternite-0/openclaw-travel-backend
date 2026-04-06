@@ -7,8 +7,10 @@ import { HomeView } from './components/HomeView';
 import { ProcessingView } from './components/ProcessingView';
 import { ItineraryView } from './components/ItineraryView';
 import { HistoryView } from './components/HistoryView';
+import { LoginView } from './components/LoginView';
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentView, setCurrentView] = useState<'home' | 'processing' | 'itinerary' | 'history'>('home');
   const [taskId, setTaskId] = useState<string | null>(null);
   const [sessionId] = useState(() => crypto.randomUUID());
@@ -55,6 +57,14 @@ export default function App() {
   const handleSidebarClose = useCallback(() => {
     setSidebarOpen(false);
   }, []);
+
+  if (!isAuthenticated) {
+    return (
+      <AnimatePresence mode="wait">
+        <LoginView key="login" onLogin={() => setIsAuthenticated(true)} />
+      </AnimatePresence>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-surface text-on-surface font-sans selection:bg-primary-container selection:text-on-primary-container">
