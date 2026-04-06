@@ -244,6 +244,74 @@ async def get_walking_route(
     return points
 
 
+async def geocode_itinerary_activities(itinerary, city: str = "") -> tuple[int, int]:
+    """
+    批量地理编码纠偏：遍历行程中所有 activity，用 AMap 地理编码
+    替换 LLM 生成的不可靠坐标。
+
+    Args:
+        itinerary: FinalItinerary 对象（会原地修改 activity.lat/lng）
+        city: 目的地城市名（提高地理编码精度）
+
+    Returns:
+        (success_count, fail_count) 纠偏成功/失败的 activity 数量
+    """
+    settings = get_settings()
+    if not settings.amap_enabled or not settings.amap_api_key:
+        logger.warning("AMap geocode skipped: disabled or no API key")
+        return 0, 0
+
+    success = 0
+    fail = 0
+
+    for day in itinerary.days:
+        for act in day.activities:
+            # 用 location（地址）和 activity（名称）作为候选查询词
+            candidates: list[str] = []
+            loc = (act.location or "").strip()
+            name = (act.activity or "").strip()
+            if loc:
+                candidates.append(loc)
+                if city:
+                    candidates.append(f"{city}{loc}")
+            if name:
+                candidates.append(name)
+                if city:
+                    candidates.append(f"{city}{name}")
+
+            if not candidates:
+                fail += 1
+                continue
+
+            best_result: Optional[tuple[float, float]] = None
+            for text in candidates[:4]:
+                result = await _geocode_text(text, city=city)
+                if result:
+                    best_result = result
+                    break
+                await asyncio.sleep(0.03)
+
+            if best_result:
+                old_lat, old_lng = act.lat, act.lng
+                act.lat, act.lng = best_result[0], best_result[1]
+                if old_lat and old_lng:
+                    shift = _distance_m(old_lat, old_lng, act.lat, act.lng)
+                    if shift > 1000:
+                        logger.info(
+                            "Geocode corrected '%s': %.0fm shift (%.4f,%.4f → %.4f,%.4f)",
+                            name[:20], shift, old_lat, old_lng, act.lat, act.lng,
+                        )
+                success += 1
+            else:
+                fail += 1
+                logger.warning("Geocode failed for activity '%s' at '%s'", name[:30], loc[:30])
+
+            await asyncio.sleep(0.05)
+
+    logger.info("Geocode itinerary: %d success, %d fail", success, fail)
+    return success, fail
+
+
 async def get_walking_route_multi(
     waypoints: list[dict],
 ) -> list[list[list[float]]]:
@@ -260,22 +328,13 @@ async def get_walking_route_multi(
     if len(waypoints) < 2:
         return []
 
-    # 先做坐标纠偏，减少 LLM 坐标偏差与真实道路冲突
-    normalized_waypoints: list[dict] = []
-    for idx, wp in enumerate(waypoints):
-        if idx > 0:
-            await asyncio.sleep(0.05)
-        try:
-            normalized_waypoints.append(await _normalize_waypoint(wp))
-        except Exception as exc:
-            logger.warning("AMap waypoint normalize failed at %d: %s", idx, exc)
-            normalized_waypoints.append(wp)
-
+    # 坐标已由 orchestrator Phase 3.5 通过 AMap 地理编码纠偏为 GCJ-02，
+    # 此处直接使用，不再重复调用 _normalize_waypoint 以减少 API 调用。
     segments: list[list[list[float]]] = []
     failed_segments = 0
-    for i in range(len(normalized_waypoints) - 1):
-        origin = normalized_waypoints[i]
-        dest = normalized_waypoints[i + 1]
+    for i in range(len(waypoints) - 1):
+        origin = waypoints[i]
+        dest = waypoints[i + 1]
 
         if i > 0:
             await asyncio.sleep(0.25)

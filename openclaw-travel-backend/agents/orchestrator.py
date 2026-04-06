@@ -35,6 +35,7 @@ from core.status_store import StatusStore
 from database import ItineraryRecord, get_session_last_result
 from services import baidu_search_service, crawleo_service, currency_service, serpapi_service, tavily_service, weather_service
 from services import search_cache
+from services.amap_service import geocode_itinerary_activities
 from services.budget_builder import build_budget
 from services.currency_builder import build_currency_info
 
@@ -666,6 +667,18 @@ async def run_travel_pipeline(
         itinerary.currency = currency
 
     logger.info("[task:%s] Itinerary assembled", task_id)
+
+    # ── Phase 3.5: AMap Geocode — replace LLM coordinates ────────────────
+    try:
+        geo_ok, geo_fail = await geocode_itinerary_activities(
+            itinerary, city=intent.dest_city,
+        )
+        logger.info(
+            "[task:%s] Geocode correction: %d success, %d fail",
+            task_id, geo_ok, geo_fail,
+        )
+    except Exception as exc:
+        logger.warning("[task:%s] Geocode correction failed: %s", task_id, exc)
 
     # ── Phase 4: Persist + Update Memory ────────────────────────────────
     record = ItineraryRecord(

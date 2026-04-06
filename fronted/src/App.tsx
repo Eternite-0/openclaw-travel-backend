@@ -54,6 +54,18 @@ export default function App() {
   const [runningTask, setRunningTask] = useState<RunningTask | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Auto-logout when any API call returns 401
+  useEffect(() => {
+    const onAuthExpired = () => {
+      setIsAuthenticated(false);
+      setCurrentView('home');
+      setItinerary(null);
+      setTaskId(null);
+    };
+    window.addEventListener('auth-expired', onAuthExpired);
+    return () => window.removeEventListener('auth-expired', onAuthExpired);
+  }, []);
+
   const handleNavigateToProcessing = useCallback((newTaskId: string, query?: string) => {
     setTaskId(newTaskId);
     setRunningTask({ taskId: newTaskId, query: query ?? '旅行规划中...', startedAt: new Date().toISOString() });

@@ -43,6 +43,16 @@ export function getAuthHeaders(): Record<string, string> {
   return tokens ? { 'Authorization': `Bearer ${tokens.access_token}` } : {};
 }
 
+/** Fire a global event so App can redirect to login on 401 */
+function handle401(res: Response): boolean {
+  if (res.status === 401) {
+    clearTokens();
+    window.dispatchEvent(new CustomEvent('auth-expired'));
+    return true;
+  }
+  return false;
+}
+
 export interface ChatAttachmentPayload {
   name: string;
   mime_type: string;
@@ -69,6 +79,7 @@ export async function postChat(
     }),
   });
   if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
     const txt = await res.text().catch(() => res.statusText);
     throw new Error(`请求失败 (${res.status}): ${txt}`);
   }
@@ -79,7 +90,10 @@ export async function pollStatus(taskId: string): Promise<TaskStatus> {
   const res = await fetch(`${API_BASE}/task/${taskId}/status`, {
     headers: getAuthHeaders(),
   });
-  if (!res.ok) throw new Error(`状态查询失败 (${res.status})`);
+  if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
+    throw new Error(`状态查询失败 (${res.status})`);
+  }
   return res.json();
 }
 
@@ -87,7 +101,10 @@ export async function fetchResult(taskId: string): Promise<FinalItinerary> {
   const res = await fetch(`${API_BASE}/task/${taskId}/result`, {
     headers: getAuthHeaders(),
   });
-  if (!res.ok) throw new Error(`获取结果失败 (${res.status})`);
+  if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
+    throw new Error(`获取结果失败 (${res.status})`);
+  }
   return res.json();
 }
 
@@ -95,7 +112,10 @@ export async function fetchTasks(): Promise<ItinerarySummary[]> {
   const res = await fetch(`${API_BASE}/tasks`, {
     headers: getAuthHeaders(),
   });
-  if (!res.ok) throw new Error(`获取历史规划失败 (${res.status})`);
+  if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
+    throw new Error(`获取历史规划失败 (${res.status})`);
+  }
   return res.json();
 }
 
@@ -104,14 +124,20 @@ export async function deleteTask(taskId: string): Promise<void> {
     method: 'DELETE',
     headers: getAuthHeaders(),
   });
-  if (!res.ok) throw new Error(`删除行程失败 (${res.status})`);
+  if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
+    throw new Error(`删除行程失败 (${res.status})`);
+  }
 }
 
 export async function fetchConversations(): Promise<Conversation[]> {
   const res = await fetch(`${API_BASE}/conversations`, {
     headers: getAuthHeaders(),
   });
-  if (!res.ok) throw new Error(`获取对话列表失败 (${res.status})`);
+  if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
+    throw new Error(`获取对话列表失败 (${res.status})`);
+  }
   return res.json();
 }
 
@@ -120,7 +146,10 @@ export async function createConversation(): Promise<Conversation> {
     method: 'POST',
     headers: getAuthHeaders(),
   });
-  if (!res.ok) throw new Error(`创建对话失败 (${res.status})`);
+  if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
+    throw new Error(`创建对话失败 (${res.status})`);
+  }
   return res.json();
 }
 
@@ -128,7 +157,10 @@ export async function fetchConversationMessages(convId: string): Promise<Convers
   const res = await fetch(`${API_BASE}/conversations/${convId}/messages`, {
     headers: getAuthHeaders(),
   });
-  if (!res.ok) throw new Error(`获取对话消息失败 (${res.status})`);
+  if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
+    throw new Error(`获取对话消息失败 (${res.status})`);
+  }
   const data = await res.json();
   return data.messages ?? [];
 }
@@ -139,7 +171,10 @@ export async function updateConversationTitle(convId: string, title: string): Pr
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
     body: JSON.stringify({ title }),
   });
-  if (!res.ok) throw new Error(`更新对话标题失败 (${res.status})`);
+  if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
+    throw new Error(`更新对话标题失败 (${res.status})`);
+  }
   return res.json();
 }
 
@@ -155,7 +190,10 @@ export async function deleteConversation(convId: string): Promise<void> {
     method: 'DELETE',
     headers: getAuthHeaders(),
   });
-  if (!res.ok) throw new Error(`删除对话失败 (${res.status})`);
+  if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
+    throw new Error(`删除对话失败 (${res.status})`);
+  }
 }
 
 export interface WalkingRouteResponse {
@@ -258,7 +296,10 @@ export async function fetchUserProfile(): Promise<UserProfile> {
   const res = await fetch(`${API_BASE}/auth/me`, {
     headers: getAuthHeaders(),
   });
-  if (!res.ok) throw new Error(`获取用户信息失败 (${res.status})`);
+  if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
+    throw new Error(`获取用户信息失败 (${res.status})`);
+  }
   return res.json();
 }
 
@@ -269,6 +310,7 @@ export async function updateUserProfile(data: { username?: string; email?: strin
     body: JSON.stringify(data),
   });
   if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
     const txt = await res.text().catch(() => res.statusText);
     throw new Error(`更新资料失败 (${res.status}): ${txt}`);
   }
@@ -282,6 +324,7 @@ export async function changePassword(oldPassword: string, newPassword: string): 
     body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
   });
   if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
     const txt = await res.text().catch(() => res.statusText);
     throw new Error(`密码修改失败 (${res.status}): ${txt}`);
   }
@@ -293,6 +336,7 @@ export async function deleteAccount(): Promise<void> {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
+    if (handle401(res)) throw new Error('登录已过期，请重新登录');
     const txt = await res.text().catch(() => res.statusText);
     throw new Error(`注销账户失败 (${res.status}): ${txt}`);
   }
