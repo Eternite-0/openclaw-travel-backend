@@ -282,7 +282,7 @@ export function ItineraryView({
       />
 
       {/* Main Content */}
-      <main className="ml-0 lg:ml-[220px] mr-0 xl:mr-[300px] pt-16 min-h-screen bg-surface-container-lowest p-4 md:p-6 lg:p-8 pb-24">
+      <main className="ml-0 lg:ml-[220px] pt-16 min-h-screen bg-surface-container-lowest p-4 md:p-6 lg:p-8 pb-24">
         <header className="mb-6 md:mb-8">
           <div className="flex flex-wrap items-center gap-2 md:gap-3 mb-2">
             <h1 className="text-xl md:text-2xl font-extrabold text-on-surface tracking-tight">{title}</h1>
@@ -356,7 +356,7 @@ export function ItineraryView({
 
 // ── Sub-components ──────────────────────────────────────────────────────────
 
-function BookingSidebar({ itinerary, title, paymentState, onPayment }: {
+function BookingSidebar({ itinerary, paymentState, onPayment }: {
   itinerary: FinalItinerary | null;
   title: string;
   paymentState: 'idle' | 'processing' | 'success';
@@ -366,191 +366,231 @@ function BookingSidebar({ itinerary, title, paymentState, onPayment }: {
 
   return (
     <>
-      {/* Mobile Toggle Button */}
-      <button
-        onClick={() => setIsOpen(true)}
-        className="xl:hidden fixed right-4 bottom-24 z-30 w-12 h-12 bg-primary text-white rounded-full shadow-lg flex items-center justify-center"
-        aria-label="打开预订侧边栏"
-      >
-        <ShoppingCart className="w-5 h-5" />
-      </button>
+      {/* Floating Trigger Button */}
+      <AnimatePresence>
+        {!isOpen && (
+          <motion.button
+            key="booking-trigger"
+            initial={{ opacity: 0, scale: 0.8, x: 20 }}
+            animate={{ opacity: 1, scale: 1, x: 0 }}
+            exit={{ opacity: 0, scale: 0.8, x: 20 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setIsOpen(true)}
+            className="fixed right-6 bottom-24 z-30 flex items-center gap-2 bg-primary text-white pl-4 pr-5 py-3 rounded-full shadow-lg shadow-primary/30 hover:bg-primary-dim active:scale-95 transition-colors"
+            aria-label="打开预订面板"
+          >
+            <ShoppingCart className="w-4 h-4" />
+            <span className="text-xs font-bold tracking-wide">确认预订</span>
+          </motion.button>
+        )}
+      </AnimatePresence>
 
-      {/* Mobile Overlay */}
-      {isOpen && (
-        <div 
-          className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40 xl:hidden"
-          onClick={() => setIsOpen(false)}
-          aria-hidden="true"
-        />
-      )}
+      {/* Backdrop */}
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            key="booking-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40"
+            onClick={() => setIsOpen(false)}
+            aria-hidden="true"
+          />
+        )}
+      </AnimatePresence>
 
-      <aside className={`
-        fixed right-0 top-16 h-[calc(100vh-64px)] w-full sm:w-[360px] xl:w-[360px] 
-        flex flex-col z-40
-        transition-transform duration-300 ease-in-out
-        xl:translate-x-0
-        ${isOpen ? 'translate-x-0' : 'translate-x-full xl:translate-x-0'}
-      `}>
-        {/* Mobile Close Button */}
-        <button
-          onClick={() => setIsOpen(false)}
-          className="xl:hidden absolute top-3 right-3 p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 z-50"
-          aria-label="关闭预订侧边栏"
-        >
-          <X className="w-4 h-4" />
-        </button>
-
-        {/* Main Card Container */}
-        <div className="m-0 xl:m-4 bg-white border border-slate-100 shadow-[0_8px_32px_rgba(0,0,0,0.04)] rounded-none xl:rounded-2xl h-full flex flex-col overflow-hidden">
-          {/* Header */}
-          <div className="flex justify-between items-center p-6 pb-4">
-            <h2 className="text-xl font-headline font-extrabold tracking-tight text-slate-900">确认预订</h2>
-            <ShoppingCart className="w-5 h-5 text-slate-400" />
-          </div>
-
-          {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto px-6 pb-4 space-y-6">
-            {/* Flight Detail */}
-            <div className="group">
-              <span className="text-[10px] font-label font-bold text-slate-400 uppercase tracking-[0.1em] mb-3 block">
-                航班详情
-              </span>
-              <div className="flex gap-4 items-start">
-                <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center flex-shrink-0">
-                  <PlaneTakeoff className="w-6 h-6 text-primary" />
+      {/* Drawer Panel */}
+      <AnimatePresence>
+        {isOpen && (
+          <motion.aside
+            key="booking-drawer"
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'spring', stiffness: 320, damping: 32, mass: 0.9 }}
+            className="fixed right-0 top-0 h-full w-full sm:w-[380px] flex flex-col z-50 shadow-[-16px_0_48px_rgba(0,0,0,0.12)]"
+          >
+            <div className="bg-white h-full flex flex-col overflow-hidden">
+              {/* Header */}
+              <div className="flex justify-between items-center px-6 py-5 border-b border-slate-100 flex-shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
+                    <ShoppingCart className="w-4 h-4 text-primary" />
+                  </div>
+                  <h2 className="text-lg font-headline font-extrabold tracking-tight text-slate-900">确认预订</h2>
                 </div>
-                <div className="flex-1 min-w-0">
-                  {itinerary?.recommended_flight ? (
-                    <>
-                      <h4 className="font-headline font-bold text-sm text-slate-900 truncate">
-                        {itinerary.recommended_flight.airline} {itinerary.recommended_flight.flight_number}
-                      </h4>
-                      <p className="text-xs text-slate-400 mt-1">
-                        {itinerary.intent.origin_city} → {itinerary.intent.dest_city}
-                      </p>
-                      <div className="flex justify-between mt-2 pt-2 border-t border-slate-50">
-                        <span className="text-[11px] text-slate-500">{formatDT(itinerary.recommended_flight.departure_time)}</span>
-                        <span className="text-[11px] font-bold text-slate-900">
-                          ¥{Math.round(itinerary.recommended_flight.price_cny).toLocaleString()}
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <h4 className="font-headline font-bold text-sm text-slate-900">中国东方航空 MU5738</h4>
-                      <p className="text-xs text-slate-400 mt-1">湛江 (ZHA) → 巴黎 (CDG)</p>
-                      <div className="flex justify-between mt-2 pt-2 border-t border-slate-50">
-                        <span className="text-[11px] text-slate-500">经济舱优惠价</span>
-                        <span className="text-[11px] font-bold text-slate-900">¥10,280.00</span>
-                      </div>
-                    </>
-                  )}
-                </div>
+                <motion.button
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                  onClick={() => setIsOpen(false)}
+                  className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400"
+                >
+                  <X className="w-4 h-4" />
+                </motion.button>
               </div>
-            </div>
 
-            {/* Hotel Detail */}
-            <div className="group">
-              <span className="text-[10px] font-label font-bold text-slate-400 uppercase tracking-[0.1em] mb-3 block">
-                住宿安排
-              </span>
-              <div className="flex gap-4 items-start">
-                <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center flex-shrink-0">
-                  <Building2 className="w-6 h-6 text-primary" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  {itinerary?.recommended_hotel ? (
-                    <>
-                      <h4 className="font-headline font-bold text-sm text-slate-900 truncate">
-                        {itinerary.recommended_hotel.name}
-                      </h4>
-                      <p className="text-xs text-slate-400 mt-1">
-                        {itinerary.days.length}晚
-                      </p>
-                      <div className="flex justify-between mt-2 pt-2 border-t border-slate-50">
-                        <span className="text-[11px] text-slate-500">含早餐</span>
-                        <span className="text-[11px] font-bold text-slate-900">
-                          ¥{Math.round(itinerary.recommended_hotel.price_per_night_cny * itinerary.days.length).toLocaleString()}
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <h4 className="font-headline font-bold text-sm text-slate-900">巴黎奥特伊假日酒店</h4>
-                      <p className="text-xs text-slate-400 mt-1">豪华大床房 • 6晚</p>
-                      <div className="flex justify-between mt-2 pt-2 border-t border-slate-50">
-                        <span className="text-[11px] text-slate-500">含早餐</span>
-                        <span className="text-[11px] font-bold text-slate-900">¥7,080.00</span>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
+              {/* Scrollable Content */}
+              <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+                {/* Flight Detail */}
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.08 }}
+                >
+                  <span className="text-[10px] font-label font-bold text-slate-400 uppercase tracking-[0.12em] mb-3 block">
+                    航班详情
+                  </span>
+                  <div className="flex gap-4 items-start p-4 bg-slate-50 rounded-2xl">
+                    <div className="w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center flex-shrink-0">
+                      <PlaneTakeoff className="w-5 h-5 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      {itinerary?.recommended_flight ? (
+                        <>
+                          <h4 className="font-headline font-bold text-sm text-slate-900 truncate">
+                            {itinerary.recommended_flight.airline} {itinerary.recommended_flight.flight_number}
+                          </h4>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {itinerary.intent.origin_city} → {itinerary.intent.dest_city}
+                          </p>
+                          <div className="flex justify-between mt-2 pt-2 border-t border-slate-100">
+                            <span className="text-[11px] text-slate-500">{formatDT(itinerary.recommended_flight.departure_time)}</span>
+                            <span className="text-[11px] font-bold text-slate-900">
+                              ¥{Math.round(itinerary.recommended_flight.price_cny).toLocaleString()}
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <h4 className="font-headline font-bold text-sm text-slate-900">中国东方航空 MU5738</h4>
+                          <p className="text-xs text-slate-400 mt-0.5">湛江 (ZHA) → 巴黎 (CDG)</p>
+                          <div className="flex justify-between mt-2 pt-2 border-t border-slate-100">
+                            <span className="text-[11px] text-slate-500">经济舱优惠价</span>
+                            <span className="text-[11px] font-bold text-slate-900">¥10,280.00</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
 
-            {/* Passengers */}
-            <div className="group">
-              <div className="flex justify-between items-center mb-3">
-                <span className="text-[10px] font-label font-bold text-slate-400 uppercase tracking-[0.1em] block">
-                  旅客
-                </span>
-                <button className="text-[10px] font-bold text-primary flex items-center gap-1 hover:underline">
-                  <Plus className="w-3 h-3" />
-                  新增旅客
-                </button>
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-3 px-3 py-2 bg-slate-50 rounded-lg">
-                  <User className="w-4 h-4 text-slate-400" />
-                  <span className="text-xs font-medium text-slate-700">张某某 (主要联系人)</span>
-                </div>
-              </div>
-            </div>
-          </div>
+                {/* Hotel Detail */}
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.14 }}
+                >
+                  <span className="text-[10px] font-label font-bold text-slate-400 uppercase tracking-[0.12em] mb-3 block">
+                    住宿安排
+                  </span>
+                  <div className="flex gap-4 items-start p-4 bg-slate-50 rounded-2xl">
+                    <div className="w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center flex-shrink-0">
+                      <Building2 className="w-5 h-5 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      {itinerary?.recommended_hotel ? (
+                        <>
+                          <h4 className="font-headline font-bold text-sm text-slate-900 truncate">
+                            {itinerary.recommended_hotel.name}
+                          </h4>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            豪华大床房 • {itinerary.days.length}晚
+                          </p>
+                          <div className="flex justify-between mt-2 pt-2 border-t border-slate-100">
+                            <span className="text-[11px] text-slate-500">含早餐</span>
+                            <span className="text-[11px] font-bold text-slate-900">
+                              ¥{Math.round(itinerary.recommended_hotel.price_per_night_cny * itinerary.days.length).toLocaleString()}
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <h4 className="font-headline font-bold text-sm text-slate-900">巴黎奥特伊假日酒店</h4>
+                          <p className="text-xs text-slate-400 mt-0.5">豪华大床房 • 6晚</p>
+                          <div className="flex justify-between mt-2 pt-2 border-t border-slate-100">
+                            <span className="text-[11px] text-slate-500">含早餐</span>
+                            <span className="text-[11px] font-bold text-slate-900">¥7,080.00</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
 
-          {/* Footer - Price & CTA */}
-          <div className="mt-auto pt-6 px-6 pb-6 border-t border-slate-100 bg-white">
-            <div className="flex justify-between items-end mb-6">
-              <div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">总计费用</span>
-                <div className="text-3xl font-headline font-extrabold text-slate-900 mt-1">
-                  ¥{itinerary ? Math.round(itinerary.total_estimated_cost_cny).toLocaleString() : '17,360'}
-                </div>
+                {/* Passengers */}
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                >
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="text-[10px] font-label font-bold text-slate-400 uppercase tracking-[0.12em]">
+                      旅客
+                    </span>
+                    <button className="text-[10px] font-bold text-primary flex items-center gap-1 hover:underline">
+                      <Plus className="w-3 h-3" />
+                      新增旅客
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3 px-3 py-2.5 bg-slate-50 rounded-xl">
+                      <User className="w-4 h-4 text-slate-400" />
+                      <span className="text-xs font-medium text-slate-700">张某某 (主要联系人)</span>
+                    </div>
+                  </div>
+                </motion.div>
               </div>
-              <div className="text-right">
-                <span className="text-[10px] text-slate-400">含税费</span>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setIsOpen(false)}
-                className="flex-1 bg-slate-100 text-slate-600 py-3.5 rounded-xl font-headline font-bold text-sm hover:bg-slate-200 transition-all"
+
+              {/* Footer */}
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.22 }}
+                className="px-6 py-6 border-t border-slate-100 bg-white flex-shrink-0"
               >
-                取消
-              </button>
-              <button
-                onClick={onPayment}
-                disabled={paymentState !== 'idle'}
-                className={`flex-[2] py-3.5 rounded-xl font-headline font-bold text-sm transition-all ${
-                  paymentState === 'success' 
-                    ? 'bg-emerald-500 text-white shadow-emerald-500/20' 
-                    : 'bg-primary text-white shadow-xl shadow-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                {paymentState === 'idle' 
-                  ? '确认支付' 
-                  : paymentState === 'processing' 
-                    ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> 
-                    : '支付成功'
-                }
-              </button>
+                <div className="flex justify-between items-end mb-5">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">总计费用</span>
+                    <div className="text-3xl font-headline font-extrabold text-slate-900 mt-1">
+                      ¥{itinerary ? Math.round(itinerary.total_estimated_cost_cny).toLocaleString() : '17,360'}
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-slate-400 mb-1">含税费</span>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setIsOpen(false)}
+                    className="flex-1 bg-slate-100 text-slate-600 py-3.5 rounded-xl font-headline font-bold text-sm hover:bg-slate-200 transition-all"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={onPayment}
+                    disabled={paymentState !== 'idle'}
+                    className={`flex-[2] py-3.5 rounded-xl font-headline font-bold text-sm transition-all ${
+                      paymentState === 'success'
+                        ? 'bg-emerald-500 text-white'
+                        : 'bg-primary text-white shadow-lg shadow-primary/20 hover:bg-slate-800'
+                    } disabled:opacity-60`}
+                  >
+                    {paymentState === 'idle'
+                      ? '确认支付'
+                      : paymentState === 'processing'
+                        ? <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+                        : '支付成功'
+                    }
+                  </button>
+                </div>
+                <p className="text-[10px] text-center text-slate-400 mt-4 leading-relaxed">
+                  点击确认即表示您同意我们的旅行政策及供应商服务条款。
+                </p>
+              </motion.div>
             </div>
-            <p className="text-[10px] text-center text-slate-400 mt-4 px-4 leading-relaxed">
-              点击确认即表示您同意我们的旅行政策及供应商服务条款。
-            </p>
-          </div>
-        </div>
-      </aside>
+          </motion.aside>
+        )}
+      </AnimatePresence>
     </>
   );
 }
@@ -1002,7 +1042,7 @@ function ChatPanel({
     }
   }, [speechSupported, isListening, inputValue]);
   return (
-    <div className="fixed bottom-4 md:bottom-6 right-4 md:right-6 xl:right-[324px] z-40">
+    <div className="fixed bottom-4 md:bottom-6 right-4 md:right-6 z-40">
       <AnimatePresence>
         {chatOpen && (
           <motion.div
