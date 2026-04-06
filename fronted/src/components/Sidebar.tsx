@@ -1,5 +1,6 @@
 import { memo, useState, useRef, useEffect, useCallback } from 'react';
 import { Map as MapIcon, History, PlusCircle, Settings, LogOut, Globe, HelpCircle, ChevronRight, X } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
 
 interface SidebarProps {
   currentView: string;
@@ -95,8 +96,14 @@ export const Sidebar = memo(function Sidebar({ currentView, onNavigate, isOpen, 
         {/* Bottom avatar bar + popup */}
         <div className="mt-auto pt-3 border-t border-outline-variant/10 relative" ref={menuRef}>
           {/* Popup menu */}
+          <AnimatePresence>
           {menuOpen && (
-            <div className="absolute bottom-full left-0 right-0 mb-2 mx-1 bg-white rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.12)] border border-outline-variant/15 py-1.5 z-50">
+            <motion.div
+              initial={{ opacity: 0, y: 8, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.96 }}
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+              className="absolute bottom-full left-0 right-0 mb-2 mx-1 bg-white rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.12)] border border-outline-variant/15 py-1.5 z-50 origin-bottom">
               {/* Email */}
               {email && (
                 <div className="px-4 py-2 text-xs text-on-surface-variant truncate border-b border-outline-variant/10 mb-1">
@@ -143,8 +150,9 @@ export const Sidebar = memo(function Sidebar({ currentView, onNavigate, isOpen, 
                   </button>
                 </>
               )}
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
 
           {/* Avatar bar trigger */}
           <button

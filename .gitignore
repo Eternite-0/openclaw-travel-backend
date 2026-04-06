@@ -47,6 +47,10 @@ fronted/coverage/
 .pnp
 .pnp.js
 
+# ── Docker (server config differs) ────────────────────────────────────
+docker-compose.yml
+docker-compose.override.yml
+
 # ── OS & Editor ───────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
