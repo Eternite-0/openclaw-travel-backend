@@ -380,28 +380,32 @@ created_at: {created_at}
 
     async def _llm_call(self, system_prompt: str, user_prompt: str = "请按照系统提示中的 JSON Schema 输出结果。") -> dict:
         """Single LLM call with retry, returns parsed dict."""
+        _MAX_ATTEMPTS = 10
+        _EXP_DELAYS = [2, 4, 8, 16, 32, 60, 60, 60, 60, 60]
         last_exc: Exception | None = None
-        _retry_delays = [2, 5, 10, 15, 20, 30]
-        for attempt in range(7):
+        for attempt in range(_MAX_ATTEMPTS):
             try:
-                completion = await self._client.chat.completions.create(
-                    model=self._model,
-                    temperature=self._temperature,
-                    messages=[
+                raw = await self._call_llm_text(
+                    [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
+                    temperature=self._temperature,
                 )
-                raw = completion.choices[0].message.content or "{}"
+                raw = raw or "{}"
                 raw = _extract_json(raw)
                 return json.loads(raw)
             except json.JSONDecodeError as exc:
                 raise ValueError(f"LLM returned invalid JSON: {exc}") from exc
             except Exception as exc:
                 last_exc = exc
-                if attempt < 6:
-                    jitter = random.uniform(0.0, 1.2)
-                    await asyncio.sleep(_retry_delays[attempt] + jitter)
+                if attempt < _MAX_ATTEMPTS - 1:
+                    delay = _EXP_DELAYS[attempt] + random.uniform(0.0, 1.2)
+                    logger.warning(
+                        "ItineraryAgent _llm_call attempt %d/%d failed (%s), retrying in %.1fs...",
+                        attempt + 1, _MAX_ATTEMPTS, exc, delay,
+                    )
+                    await asyncio.sleep(delay)
                 else:
                     raise
         raise ValueError(f"LLM request failed: {last_exc}")

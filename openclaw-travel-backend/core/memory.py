@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import random
 from datetime import datetime
 from typing import Any
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -171,8 +175,7 @@ class MemoryManager:
 
     async def compress_if_needed(
         self,
-        client: Any,
-        model: str,
+        llm_config: dict,
         *,
         max_history_chars: int = _MAX_HISTORY_CHARS,
         min_msgs: int = _MIN_MSGS_TO_COMPRESS,
@@ -264,12 +267,109 @@ class MemoryManager:
         # ── Call LLM with structured prompt ──────────────────────────
         prompt = self._COMPACT_PROMPT_TEMPLATE.format(context=context_text)
         try:
-            completion = await client.chat.completions.create(
-                model=model,
-                temperature=0.2,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw_response = completion.choices[0].message.content or ""
+            settings_cfg_list = llm_config.get("config_list", [{}])
+            cfg = settings_cfg_list[0] if settings_cfg_list else {}
+            from config import get_settings
+            settings = get_settings()
+            api_key = cfg.get("api_key", settings.openai_api_key)
+            base_url = cfg.get("base_url", settings.openai_base_url).rstrip("/")
+            model = cfg.get("model", settings.openai_model)
+            verbosity = cfg.get("verbosity", "medium")
+            top_p = float(cfg.get("top_p", 0.98))
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+            }
+
+            async def _stream_first() -> str:
+                url = f"{base_url}/chat/completions"
+                payload = {
+                    "model": model,
+                    "verbosity": verbosity,
+                    "temperature": 0.2,
+                    "top_p": top_p,
+                    "max_tokens": 800,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": True,
+                }
+                chunks: list[str] = []
+                async with httpx.AsyncClient(timeout=60.0) as hc:
+                    async with hc.stream("POST", url, headers=headers, json=payload) as resp:
+                        if resp.status_code >= 400:
+                            body = await resp.aread()
+                            raise ValueError(f"compress stream status={resp.status_code} body={(body.decode(errors='ignore')[:300] if body else '')}")
+                        async for line in resp.aiter_lines():
+                            if not line:
+                                continue
+                            data_str = ""
+                            if line.startswith("data: "):
+                                data_str = line[6:].strip()
+                            elif line.startswith("data:"):
+                                data_str = line[5:].strip()
+                            if not data_str or data_str == "[DONE]":
+                                continue
+                            try:
+                                evt = json.loads(data_str)
+                            except Exception:
+                                continue
+                            choices = evt.get("choices") or []
+                            if not choices:
+                                continue
+                            delta = (choices[0] or {}).get("delta") or {}
+                            delta_content = delta.get("content")
+                            if isinstance(delta_content, str) and delta_content:
+                                chunks.append(delta_content)
+                return "".join(chunks).strip()
+
+            raw_response = ""
+            _MAX_ATTEMPTS = 4
+            _DELAYS = [1, 2, 4, 8]
+            for attempt in range(_MAX_ATTEMPTS):
+                try:
+                    raw_response = await _stream_first()
+                    if raw_response:
+                        break
+                    # fallback non-stream
+                    url = f"{base_url}/chat/completions"
+                    payload = {
+                        "model": model,
+                        "verbosity": verbosity,
+                        "temperature": 0.2,
+                        "top_p": top_p,
+                        "max_tokens": 800,
+                        "messages": [{"role": "user", "content": prompt}],
+                    }
+                    async with httpx.AsyncClient(timeout=60.0) as hc:
+                        resp = await hc.post(url, headers=headers, json=payload)
+                        if resp.status_code >= 400:
+                            raise ValueError(f"compress non-stream status={resp.status_code} body={(resp.text or '')[:300]}")
+                        data = resp.json()
+                        choices = data.get("choices") or []
+                        msg = (choices[0] or {}).get("message") if choices else {}
+                        content = (msg or {}).get("content")
+                        if isinstance(content, str):
+                            raw_response = content.strip()
+                        elif isinstance(content, list):
+                            buf: list[str] = []
+                            for p in content:
+                                if isinstance(p, dict) and p.get("type") == "text" and isinstance(p.get("text"), str):
+                                    buf.append(p["text"])
+                            raw_response = "\n".join(buf).strip()
+                        if raw_response:
+                            break
+                    if attempt < _MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(_DELAYS[attempt] + random.uniform(0.0, 0.8))
+                except Exception:
+                    if attempt < _MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(_DELAYS[attempt] + random.uniform(0.0, 0.8))
+                        continue
+                    raise
         except Exception as exc:
             logger.warning(
                 "Memory compress LLM call failed (attempt will count toward circuit breaker): %s",

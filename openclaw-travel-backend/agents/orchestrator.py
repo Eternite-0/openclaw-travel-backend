@@ -6,7 +6,6 @@ import logging
 from datetime import datetime, time
 from typing import Any, Optional
 
-from openai import AsyncOpenAI
 from sqlmodel import Session
 
 from agents.attraction_agent import AttractionAgent
@@ -110,17 +109,8 @@ async def run_travel_pipeline(
     # ── Memory 历史压缩（防止长对话爆上下文）────────────────────────────
     # Inspired by claude-code's autoCompact: dual trigger (token + msg count),
     # structured summary prompt, PTL retry with head truncation, circuit breaker.
-    _mem_cfg = llm_config.get("config_list", [{}])
-    _mem_cfg = _mem_cfg[0] if _mem_cfg else {}
-    _mem_client = AsyncOpenAI(
-        api_key=_mem_cfg.get("api_key", get_settings().openai_api_key),
-        base_url=_mem_cfg.get("base_url", get_settings().openai_base_url).rstrip("/"),
-        timeout=60.0,
-        max_retries=0,
-    )
-    _mem_model = _mem_cfg.get("model", get_settings().openai_model)
     _compact_result = await memory.compress_if_needed(
-        _mem_client, _mem_model,
+        llm_config=llm_config,
         max_history_chars=12_000,
         keep_recent=5,
     )

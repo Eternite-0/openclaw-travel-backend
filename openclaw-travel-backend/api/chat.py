@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import random
 from typing import Any, Optional
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, Depends, Request
-from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 
 from agents.orchestrator import ALL_AGENT_NAMES, run_travel_pipeline
 from config import get_settings
@@ -140,18 +141,23 @@ def _load_itinerary_context(
                 prev_record = db.exec(
                     select(ItineraryRecord).where(ItineraryRecord.task_id == task_id)
                 ).first()
+            logger.info("[context] DB lookup by task_id=%s → %s", task_id, "found" if prev_record else "not found")
         if not prev_record:
             prev_record = get_session_last_result(session_id)
+            logger.info("[context] DB lookup by session_id=%s → %s", session_id, "found" if prev_record else "not found")
     except Exception as exc:
         logger.warning("Failed to load itinerary context: %s", exc)
 
     if prev_record and prev_record.itinerary_json:
+        logger.info("[context] Loaded itinerary context from DB (%d chars)", len(prev_record.itinerary_json))
         return _build_classifier_context(prev_record.itinerary_json)
 
     # Fallback: use context sent from the frontend (for demo / no-DB scenarios)
     if frontend_context:
-        logger.info("[context] Using frontend-provided itinerary context")
+        logger.info("[context] Using frontend-provided itinerary context (%d chars)", len(frontend_context))
         return frontend_context
+    logger.warning("[context] No itinerary context found (task_id=%s, session_id=%s, frontend_ctx=%s)",
+                   task_id, session_id, bool(frontend_context))
     return "无"
 
 
@@ -182,64 +188,282 @@ async def _call_llm(
     temperature: float = 0.3,
     messages: Optional[list[dict[str, Any]]] = None,
 ) -> Optional[str]:
-    """Call the LLM and return the raw content string, or None on failure."""
+    """Call LLM via raw HTTP (no OpenAI SDK parsing)."""
+    def _extract_text_from_part(part: Any) -> list[str]:
+        if part is None:
+            return []
+        if isinstance(part, str):
+            s = part.strip()
+            return [s] if s else []
+        if isinstance(part, list):
+            out: list[str] = []
+            for p in part:
+                out.extend(_extract_text_from_part(p))
+            return out
+        if isinstance(part, dict):
+            out: list[str] = []
+            p_type = str(part.get("type", "")).lower()
+            if p_type in {"text", "output_text", "input_text"}:
+                txt = part.get("text") or part.get("value")
+                if isinstance(txt, str) and txt.strip():
+                    out.append(txt.strip())
+            if "text" in part and isinstance(part.get("text"), str):
+                txt = part["text"].strip()
+                if txt:
+                    out.append(txt)
+            return out
+        return []
+
+    def _extract_text_from_chat_json(data: dict[str, Any]) -> Optional[str]:
+        try:
+            choices = data.get("choices") or []
+            if not choices:
+                return None
+            msg = (choices[0] or {}).get("message") or {}
+            content = msg.get("content")
+            chunks = _extract_text_from_part(content)
+            if chunks:
+                return "\n".join(chunks).strip()
+            # Some gateways place text directly on choice/message.
+            for key in ("text", "output_text"):
+                chunks = _extract_text_from_part((choices[0] or {}).get(key))
+                if chunks:
+                    return "\n".join(chunks).strip()
+                chunks = _extract_text_from_part(msg.get(key))
+                if chunks:
+                    return "\n".join(chunks).strip()
+            return None
+        except Exception:
+            return None
+
+    def _extract_text_from_responses_json(data: dict[str, Any]) -> Optional[str]:
+        # OpenAI Responses often returns output_text (string) or output[*].content[*].text
+        direct = data.get("output_text")
+        chunks = _extract_text_from_part(direct)
+        if chunks:
+            return "\n".join(chunks).strip()
+
+        output = data.get("output") or []
+        all_chunks: list[str] = []
+        if isinstance(output, list):
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                all_chunks.extend(_extract_text_from_part(item.get("content")))
+        if all_chunks:
+            return "\n".join(all_chunks).strip()
+        return None
+
+    def _to_responses_input(payload_msgs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        converted: list[dict[str, Any]] = []
+        for msg in payload_msgs:
+            role = msg.get("role", "user")
+            c = msg.get("content", "")
+            parts: list[dict[str, Any]] = []
+            if isinstance(c, str):
+                parts.append({"type": "input_text", "text": c})
+            elif isinstance(c, list):
+                for part in c:
+                    if not isinstance(part, dict):
+                        continue
+                    p_type = part.get("type")
+                    if p_type == "text":
+                        parts.append({"type": "input_text", "text": part.get("text", "")})
+                    elif p_type == "image_url":
+                        image_url = (part.get("image_url") or {}).get("url")
+                        if image_url:
+                            parts.append({"type": "input_image", "image_url": image_url})
+            if parts:
+                converted.append({"role": role, "content": parts})
+        return converted
+
     settings = get_settings()
     config_list = llm_config.get("config_list", [{}])
     cfg = config_list[0] if config_list else {}
     api_key = cfg.get("api_key", settings.openai_api_key)
     base_url = cfg.get("base_url", settings.openai_base_url).rstrip("/")
     model = cfg.get("model", settings.openai_model)
+    verbosity = cfg.get("verbosity", "medium")
+    top_p = float(cfg.get("top_p", 0.98))
+    payload_messages = messages or [{"role": "user", "content": prompt or ""}]
 
-    client = AsyncOpenAI(
-        api_key=api_key,
-        base_url=base_url,
-        timeout=30.0,
-        max_retries=0,
-    )
-    try:
-        payload_messages = messages or [{"role": "user", "content": prompt or ""}]
-        _retry_delays = [2, 5, 10, 15, 20, 30]
-        for attempt in range(7):
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+    }
+    _MAX_ATTEMPTS = 4
+    _EXP_DELAYS = [1, 2, 4, 8]
+
+    async def _post_json(endpoint: str, payload: dict[str, Any]) -> tuple[int, Optional[dict[str, Any]], str]:
+        url = f"{base_url}/{endpoint.lstrip('/')}"
+        async with httpx.AsyncClient(timeout=30.0) as hc:
+            resp = await hc.post(url, headers=headers, json=payload)
+            text_body = resp.text or ""
+            if resp.status_code >= 400:
+                return resp.status_code, None, text_body
             try:
-                completion = await client.chat.completions.create(
-                    model=model,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    messages=payload_messages,  # type: ignore[arg-type]
+                data = resp.json()
+            except Exception:
+                return resp.status_code, None, text_body
+            return resp.status_code, data, text_body
+
+    async def _post_chat_stream(payload: dict[str, Any]) -> tuple[Optional[str], str]:
+        """Fallback for gateways that only return delta text in streaming mode."""
+        url = f"{base_url}/chat/completions"
+        stream_payload = dict(payload)
+        stream_payload["stream"] = True
+        chunks: list[str] = []
+        raw_preview_parts: list[str] = []
+        async with httpx.AsyncClient(timeout=45.0) as hc:
+            async with hc.stream("POST", url, headers=headers, json=stream_payload) as resp:
+                if resp.status_code >= 400:
+                    body = await resp.aread()
+                    return None, (body.decode(errors="ignore")[:500] if body else "")
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data_str = line[5:].strip()
+                    else:
+                        continue
+                    if data_str == "[DONE]":
+                        break
+                    raw_preview_parts.append(data_str[:120])
+                    try:
+                        evt = __import__("json").loads(data_str)
+                    except Exception:
+                        continue
+                    choices = evt.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = (choices[0] or {}).get("delta") or {}
+                    delta_content = delta.get("content")
+                    delta_chunks = _extract_text_from_part(delta_content)
+                    if delta_chunks:
+                        chunks.extend(delta_chunks)
+        text = "".join([c for c in chunks if c]).strip()
+        return (text or None), " | ".join(raw_preview_parts)[:800]
+
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            # Fast path: stream first for gateways that only emit delta.content.
+            stream_text, stream_preview = await _post_chat_stream(
+                {
+                    "model": model,
+                    "verbosity": verbosity,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "max_tokens": max_tokens,
+                    "messages": payload_messages,
+                }
+            )
+            if stream_text:
+                logger.info("[llm] chat/completions stream-first returned text")
+                return stream_text
+            logger.info("[llm] stream-first produced no text; preview=%s", stream_preview)
+
+            chat_status, chat_data, chat_body = await _post_json(
+                "chat/completions",
+                {
+                    "model": model,
+                    "verbosity": verbosity,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "max_tokens": max_tokens,
+                    "messages": payload_messages,
+                },
+            )
+
+            if chat_status >= 400:
+                if chat_status in {403, 429, 500, 502, 503, 504} and attempt < _MAX_ATTEMPTS - 1:
+                    delay = _EXP_DELAYS[attempt] + random.uniform(0.0, 0.8)
+                    logger.warning(
+                        "[llm] chat/completions status=%s, retrying attempt %d/%d in %.1fs; body=%s",
+                        chat_status, attempt + 1, _MAX_ATTEMPTS, delay, chat_body[:400],
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.warning("[llm] chat/completions failed status=%s body=%s", chat_status, chat_body[:600])
+                return None
+
+            chat_text = _extract_text_from_chat_json(chat_data or {})
+            finish_reason = None
+            try:
+                finish_reason = ((chat_data or {}).get("choices") or [{}])[0].get("finish_reason")
+            except Exception:
+                pass
+            logger.info(
+                "[llm] model=%s finish_reason=%s chat_text_found=%s",
+                model, finish_reason, bool(chat_text),
+            )
+            if chat_text:
+                return chat_text
+
+            resp_input = _to_responses_input(payload_messages)
+            if not resp_input:
+                logger.warning("[llm] No convertible input for /responses fallback")
+                return None
+
+            resp_status, resp_data, resp_body = await _post_json(
+                "responses",
+                {
+                    "model": model,
+                    "verbosity": verbosity,
+                    "input": resp_input,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "max_output_tokens": max_tokens,
+                    "text": {"format": {"type": "text"}},
+                },
+            )
+            if resp_status >= 400:
+                if resp_status in {403, 429, 500, 502, 503, 504} and attempt < _MAX_ATTEMPTS - 1:
+                    delay = _EXP_DELAYS[attempt] + random.uniform(0.0, 0.8)
+                    logger.warning(
+                        "[llm] /responses status=%s, retrying attempt %d/%d in %.1fs; body=%s",
+                        resp_status, attempt + 1, _MAX_ATTEMPTS, delay, resp_body[:400],
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.warning("[llm] /responses failed status=%s body=%s", resp_status, resp_body[:600])
+                return None
+
+            resp_text = _extract_text_from_responses_json(resp_data or {})
+            if resp_text:
+                logger.info("[llm] /responses returned text successfully")
+                return resp_text
+
+            # Important: if provider returns 200 but no text in both APIs, retries are usually useless.
+            logger.warning(
+                "[llm] 200 but no textual content in both endpoints. chat_preview=%s responses_preview=%s",
+                repr(chat_data)[:500],
+                repr(resp_data)[:700],
+            )
+            return None
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            if attempt < _MAX_ATTEMPTS - 1:
+                delay = _EXP_DELAYS[attempt] + random.uniform(0.0, 0.8)
+                logger.warning(
+                    "[llm] http error (%s), retrying attempt %d/%d in %.1fs",
+                    exc, attempt + 1, _MAX_ATTEMPTS, delay,
                 )
-                content = completion.choices[0].message.content
-                if isinstance(content, str):
-                    return content.strip()
-                if isinstance(content, list):
-                    chunks = []
-                    for part in content:
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            chunks.append(part.get("text", ""))
-                    return "\n".join([c for c in chunks if c]).strip()
-                return str(content).strip()
-            except APIStatusError as exc:
-                status_code = exc.status_code or 0
-                if status_code in {429, 502, 503, 504} and attempt < 6:
-                    delay = _retry_delays[attempt]
-                    logger.warning("LLM status %d, retrying in %ds...", status_code, delay)
-                    await asyncio.sleep(delay)
-                    continue
-                logger.warning("LLM returned status %s", status_code)
-                return None
-            except (APIConnectionError, APITimeoutError) as exc:
-                if attempt < 6:
-                    delay = _retry_delays[attempt]
-                    logger.warning("LLM call failed (%s), retrying in %ds...", exc, delay)
-                    await asyncio.sleep(delay)
-                    continue
-                logger.warning("LLM call failed after 7 attempts: %s", exc)
-                return None
-        return None
-    except Exception as exc:
-        logger.warning("LLM call failed: %s", exc)
-        return None
-    finally:
-        await client.close()
+                await asyncio.sleep(delay)
+                continue
+            logger.warning("[llm] http error after %d attempts: %s", _MAX_ATTEMPTS, exc)
+            return None
+        except Exception as exc:
+            logger.warning("[llm] raw http llm call failed: %s", exc)
+            return None
+
+    return None
 
 
 def _format_history(messages: list[dict]) -> str:

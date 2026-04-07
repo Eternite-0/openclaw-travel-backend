@@ -282,7 +282,7 @@ export function ItineraryView({
       />
 
       {/* Main Content */}
-      <main className="ml-0 lg:ml-[220px] pt-16 min-h-screen bg-surface-container-lowest p-4 md:p-6 lg:p-8 pb-24">
+      <main className="ml-0 lg:ml-[220px] pt-16 min-h-screen bg-surface-container-lowest px-4 md:px-6 lg:px-8 pb-24">
         <header className="mb-6 md:mb-8">
           <div className="flex flex-wrap items-center gap-2 md:gap-3 mb-2">
             <h1 className="text-xl md:text-2xl font-extrabold text-on-surface tracking-tight">{title}</h1>

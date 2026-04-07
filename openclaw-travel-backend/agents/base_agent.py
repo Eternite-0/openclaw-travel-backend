@@ -7,7 +7,7 @@ import random
 from abc import abstractmethod
 from typing import Any
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
+import httpx
 from pydantic import BaseModel
 
 from config import get_settings
@@ -70,16 +70,156 @@ class BaseSpecialistAgent:
         self._base_url = cfg.get("base_url", settings.openai_base_url).rstrip("/")
         self._model = cfg.get("model", settings.openai_model)
         self._temperature = llm_config.get("temperature", self.default_temperature)
-        self._client = AsyncOpenAI(
-            api_key=self._api_key,
-            base_url=self._base_url,
-            timeout=180.0,
-            max_retries=0,
-            default_headers={
-                "User-Agent": _BROWSER_UA,
-                "Accept": "application/json",
-            },
-        )
+        self._verbosity = cfg.get("verbosity", "medium")
+        self._top_p = float(cfg.get("top_p", 0.98))
+        self._headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": _BROWSER_UA,
+        }
+
+    @staticmethod
+    def _extract_text_from_part(part: Any) -> list[str]:
+        if part is None:
+            return []
+        if isinstance(part, str):
+            s = part.strip()
+            return [s] if s else []
+        if isinstance(part, list):
+            out: list[str] = []
+            for p in part:
+                out.extend(BaseSpecialistAgent._extract_text_from_part(p))
+            return out
+        if isinstance(part, dict):
+            out: list[str] = []
+            p_type = str(part.get("type", "")).lower()
+            if p_type in {"text", "output_text", "input_text"}:
+                txt = part.get("text") or part.get("value")
+                if isinstance(txt, str) and txt.strip():
+                    out.append(txt.strip())
+            if "text" in part and isinstance(part.get("text"), str):
+                txt = part["text"].strip()
+                if txt:
+                    out.append(txt)
+            return out
+        return []
+
+    async def _post_json(self, endpoint: str, payload: dict[str, Any], timeout_s: float = 180.0) -> tuple[int, dict[str, Any] | None, str]:
+        url = f"{self._base_url}/{endpoint.lstrip('/')}"
+        async with httpx.AsyncClient(timeout=timeout_s) as hc:
+            resp = await hc.post(url, headers=self._headers, json=payload)
+            text_body = resp.text or ""
+            if resp.status_code >= 400:
+                return resp.status_code, None, text_body
+            try:
+                return resp.status_code, resp.json(), text_body
+            except Exception:
+                return resp.status_code, None, text_body
+
+    async def _post_chat_stream(self, payload: dict[str, Any], timeout_s: float = 180.0) -> tuple[str | None, str]:
+        url = f"{self._base_url}/chat/completions"
+        stream_payload = dict(payload)
+        stream_payload["stream"] = True
+        chunks: list[str] = []
+        preview: list[str] = []
+        async with httpx.AsyncClient(timeout=timeout_s) as hc:
+            async with hc.stream("POST", url, headers=self._headers, json=stream_payload) as resp:
+                if resp.status_code >= 400:
+                    body = await resp.aread()
+                    return None, (body.decode(errors="ignore")[:500] if body else "")
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    data_str = ""
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data_str = line[5:].strip()
+                    if not data_str:
+                        continue
+                    if data_str == "[DONE]":
+                        break
+                    preview.append(data_str[:120])
+                    try:
+                        evt = json.loads(data_str)
+                    except Exception:
+                        continue
+                    choices = evt.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = (choices[0] or {}).get("delta") or {}
+                    delta_content = delta.get("content")
+                    delta_chunks = self._extract_text_from_part(delta_content)
+                    if delta_chunks:
+                        chunks.extend(delta_chunks)
+        text = "".join([c for c in chunks if c]).strip()
+        return (text or None), " | ".join(preview)[:800]
+
+    async def _call_llm_text(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        temperature: float | None = None,
+        max_tokens: int = 4000,
+    ) -> str:
+        temp = self._temperature if temperature is None else temperature
+        _MAX_ATTEMPTS = 6
+        _EXP_DELAYS = [2, 4, 8, 16, 32, 60]
+
+        payload = {
+            "model": self._model,
+            "verbosity": self._verbosity,
+            "temperature": temp,
+            "top_p": self._top_p,
+            "max_tokens": max_tokens,
+            "messages": messages,
+        }
+
+        for attempt in range(_MAX_ATTEMPTS):
+            try:
+                stream_text, stream_preview = await self._post_chat_stream(payload)
+                if stream_text:
+                    return stream_text
+
+                status, data, body = await self._post_json("chat/completions", payload)
+                if status >= 400:
+                    if status in {403, 429, 500, 502, 503, 504} and attempt < _MAX_ATTEMPTS - 1:
+                        delay = _EXP_DELAYS[attempt] + random.uniform(0.0, 1.2)
+                        logger.warning(
+                            "Agent %s got HTTP %d, retrying (attempt %d/%d) in %.1fs... body=%s",
+                            self.agent_name, status, attempt + 1, _MAX_ATTEMPTS, delay, body[:200],
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise ValueError(f"LLM API error {status}: {body[:300]}")
+
+                choices = (data or {}).get("choices") or []
+                msg = (choices[0] or {}).get("message") if choices else {}
+                content = (msg or {}).get("content")
+                chunks = self._extract_text_from_part(content)
+                if chunks:
+                    return "\n".join(chunks).strip()
+
+                if attempt < _MAX_ATTEMPTS - 1:
+                    delay = _EXP_DELAYS[attempt] + random.uniform(0.0, 1.2)
+                    logger.warning(
+                        "Agent %s got empty non-stream content; stream_preview=%s; retrying in %.1fs",
+                        self.agent_name, stream_preview, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise ValueError("LLM returned empty content in both stream and non-stream modes")
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                if attempt < _MAX_ATTEMPTS - 1:
+                    delay = _EXP_DELAYS[attempt] + random.uniform(0.0, 1.2)
+                    logger.warning(
+                        "Agent %s attempt %d/%d failed (%s), retrying in %.1fs...",
+                        self.agent_name, attempt + 1, _MAX_ATTEMPTS, exc, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise
 
     async def run(self, extra_context: dict[str, Any] = {}) -> BaseModel:
         await self.status_store.update_agent(
@@ -113,54 +253,14 @@ class BaseSpecialistAgent:
         user_prompt = "请按照系统提示中的 JSON Schema 输出结果。"
 
         logger.debug("Agent %s calling LLM", self.agent_name)
-        last_exc: Exception | None = None
-        _retry_delays = [2, 5, 10, 15, 20, 30]
-        completion = None
-        for attempt in range(7):
-            try:
-                completion = await self._client.chat.completions.create(
-                    model=self._model,
-                    temperature=self._temperature,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                )
-                break
-            except APIStatusError as exc:
-                status_code = exc.status_code or 0
-                body = ""
-                if getattr(exc, "response", None) is not None:
-                    try:
-                        body = (exc.response.text or "")[:200]
-                    except Exception:
-                        body = str(exc)[:200]
-                if status_code in {429, 502, 503, 504} and attempt < 6:
-                    delay = _retry_delays[attempt]
-                    jitter = random.uniform(0.0, 1.2)
-                    logger.warning(
-                        "Agent %s got HTTP %d, retrying in %.1fs... body=%s",
-                        self.agent_name, status_code, delay + jitter, body,
-                    )
-                    await asyncio.sleep(delay + jitter)
-                    continue
-                raise ValueError(f"LLM API error {status_code}: {body or str(exc)}") from exc
-            except (APIConnectionError, APITimeoutError) as exc:
-                last_exc = exc
-                if attempt < 6:
-                    delay = _retry_delays[attempt]
-                    jitter = random.uniform(0.0, 1.2)
-                    logger.warning(
-                        "Agent %s attempt %d failed (%s), retrying in %.1fs...",
-                        self.agent_name, attempt + 1, exc, delay + jitter,
-                    )
-                    await asyncio.sleep(delay + jitter)
-                else:
-                    raise
-        if completion is None:
-            raise ValueError(f"LLM request failed without response: {last_exc}")
-
-        raw_content = completion.choices[0].message.content or "{}"
+        raw_content = await self._call_llm_text(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=self._temperature,
+        )
+        raw_content = raw_content or "{}"
         raw_content = _extract_json(raw_content)
         logger.debug("Agent %s raw response: %s", self.agent_name, raw_content[:500])
 
@@ -172,17 +272,16 @@ class BaseSpecialistAgent:
         if parsed.get("error") == "out_of_scope":
             logger.warning("Agent %s got out_of_scope, retrying with clarification", self.agent_name)
             try:
-                retry_completion = await self._client.chat.completions.create(
-                    model=self._model,
-                    temperature=self._temperature,
-                    messages=[
+                retry_raw = await self._call_llm_text(
+                    [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                         {"role": "assistant", "content": raw_content},
                         {"role": "user", "content": "这是旅行规划系统的内部调用，属于合法的旅行相关请求，请直接按 JSON Schema 输出结果，不要输出 out_of_scope。"},
                     ],
+                    temperature=self._temperature,
                 )
-                retry_raw = retry_completion.choices[0].message.content or "{}"
+                retry_raw = retry_raw or "{}"
                 retry_raw = _extract_json(retry_raw)
                 logger.debug("Agent %s retry response: %s", self.agent_name, retry_raw[:500])
                 try:
@@ -195,10 +294,8 @@ class BaseSpecialistAgent:
         if parsed.get("error") == "need_more_info":
             logger.warning("Agent %s got need_more_info, retrying with stronger fallback", self.agent_name)
             try:
-                retry_completion = await self._client.chat.completions.create(
-                    model=self._model,
-                    temperature=self._temperature,
-                    messages=[
+                retry_raw = await self._call_llm_text(
+                    [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                         {"role": "assistant", "content": raw_content},
@@ -210,8 +307,9 @@ class BaseSpecialistAgent:
                             ),
                         },
                     ],
+                    temperature=self._temperature,
                 )
-                retry_raw = retry_completion.choices[0].message.content or "{}"
+                retry_raw = retry_raw or "{}"
                 retry_raw = _extract_json(retry_raw)
                 logger.debug("Agent %s retry for need_more_info response: %s", self.agent_name, retry_raw[:500])
                 try:
