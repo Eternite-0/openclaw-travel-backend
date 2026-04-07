@@ -20,6 +20,7 @@ AMAP_WALKING_URL = "https://restapi.amap.com/v5/direction/walking"
 AMAP_DRIVING_URL = "https://restapi.amap.com/v5/direction/driving"
 AMAP_RIDING_URL = "https://restapi.amap.com/v5/direction/bicycling"
 AMAP_GEOCODE_URL = "https://restapi.amap.com/v3/geocode/geo"
+AMAP_PLACE_TEXT_URL = "https://restapi.amap.com/v3/place/text"
 _MAX_GEOCODE_ATTEMPTS = 3
 _MAX_ACCEPT_SHIFT_M = 15000  # If correction is too far from model point, keep original.
 
@@ -77,6 +78,67 @@ async def _geocode_text(address: str, city: str = "") -> Optional[tuple[float, f
                 await asyncio.sleep(0.08 * (attempt + 1))
                 continue
             return None
+
+
+async def _poi_text_search(address: str, city: str = "", limit: int = 3) -> list[tuple[float, float]]:
+    """Fallback POI text search for vague/non-standard addresses."""
+    settings = get_settings()
+    if not settings.amap_enabled or not settings.amap_api_key:
+        return []
+    if not address or not address.strip():
+        return []
+
+    params = {
+        "key": settings.amap_api_key,
+        "keywords": address.strip(),
+        "city": city.strip() if city else "",
+        "offset": max(1, min(limit, 10)),
+        "page": 1,
+        "extensions": "base",
+    }
+    for attempt in range(_MAX_GEOCODE_ATTEMPTS):
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                resp = await client.get(AMAP_PLACE_TEXT_URL, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+            if data.get("status") != "1" or data.get("infocode") != "10000":
+                if attempt < _MAX_GEOCODE_ATTEMPTS - 1:
+                    await asyncio.sleep(0.08 * (attempt + 1))
+                    continue
+                return []
+
+            pois = data.get("pois", [])
+            if not isinstance(pois, list) or not pois:
+                if attempt < _MAX_GEOCODE_ATTEMPTS - 1:
+                    await asyncio.sleep(0.08 * (attempt + 1))
+                    continue
+                return []
+
+            out: list[tuple[float, float]] = []
+            for p in pois[: max(1, min(limit, 10))]:
+                loc = p.get("location", "")
+                if not isinstance(loc, str) or "," not in loc:
+                    continue
+                lng_s, lat_s = loc.split(",", 1)
+                out.append((float(lat_s), float(lng_s)))
+            return out
+        except Exception:
+            if attempt < _MAX_GEOCODE_ATTEMPTS - 1:
+                await asyncio.sleep(0.08 * (attempt + 1))
+                continue
+            return []
+
+
+async def _resolve_text_coords(address: str, city: str = "", limit: int = 3) -> list[tuple[float, float]]:
+    """Resolve coordinates from geocode first, then place/text fallback."""
+    geo = await _geocode_text(address, city=city)
+    if geo:
+        return [geo]
+    poi_results = await _poi_text_search(address, city=city, limit=limit)
+    if poi_results:
+        logger.info("POI text fallback hit for '%s' (%d candidates)", address[:32], len(poi_results))
+    return poi_results
 
 
 def _clean_candidate_text(text: str) -> list[str]:
@@ -168,14 +230,11 @@ async def _normalize_waypoint(point: dict) -> dict:
     best_dist = float("inf")
 
     for text in dedup[:4]:
-        geo = await _geocode_text(text, city=city)
-        if not geo:
-            continue
-        g_lat, g_lng = geo
-        d = _distance_m(lat, lng, g_lat, g_lng)
-        if d < best_dist:
-            best_dist = d
-            best = (g_lat, g_lng)
+        for g_lat, g_lng in await _resolve_text_coords(text, city=city, limit=3):
+            d = _distance_m(lat, lng, g_lat, g_lng)
+            if d < best_dist:
+                best_dist = d
+                best = (g_lat, g_lng)
 
     if not best:
         return point
@@ -352,8 +411,8 @@ async def geocode_itinerary_activities(itinerary, city: str = "") -> tuple[int, 
             best_result: Optional[tuple[float, float]] = None
             best_dist = float("inf")
             for text in candidates[:4]:
-                result = await _geocode_text(text, city=city)
-                if result:
+                results = await _resolve_text_coords(text, city=city, limit=3)
+                for result in results:
                     if has_old:
                         d = _distance_m(old_lat, old_lng, result[0], result[1])
                     else:
