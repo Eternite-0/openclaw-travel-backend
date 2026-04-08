@@ -19,6 +19,8 @@ import type { ChatAttachmentPayload } from '../api';
 import { formatDT, buildItineraryContext, prefetchPixabayImage } from '../utils';
 import { ActivityImage } from './ActivityImage';
 import { DayRouteMap } from './DayRouteMap';
+import wechatPayImage from '../../images/wechat.png';
+import alipayPayImage from '../../images/alipay.png';
 
 interface ItineraryViewProps {
   itinerary: FinalItinerary | null;
