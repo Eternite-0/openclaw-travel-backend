@@ -30,7 +30,6 @@ export function ItineraryView({
   itinerary, sessionId, onUpdateItinerary,
 }: ItineraryViewProps) {
   const [activeDay, setActiveDay] = useState(1);
-  const [paymentState, setPaymentState] = useState<'idle' | 'processing' | 'success'>('idle');
   const [inputValue, setInputValue] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
@@ -193,11 +192,6 @@ export function ItineraryView({
     ? `${destCity} ${totalDays} 天智慧旅行方案`
     : '云南 5 天智慧旅行方案';
 
-  const handlePayment = useCallback(() => {
-    setPaymentState('processing');
-    setTimeout(() => setPaymentState('success'), 1500);
-  }, []);
-
   const handleNewChat = useCallback(async () => {
     try {
       const conv = await createConversation();
@@ -278,8 +272,6 @@ export function ItineraryView({
       <BookingSidebar
         itinerary={itinerary}
         title={title}
-        paymentState={paymentState}
-        onPayment={handlePayment}
       />
 
       {/* Main Content */}
@@ -324,7 +316,7 @@ export function ItineraryView({
           <div className="lg:col-span-4 space-y-4 md:space-y-6">
             <DayRouteMap activities={currentDay?.activities ?? []} dayNumber={activeDay} city={destCity} />
             <WeatherWidget destCity={destCity} activeDay={activeDay} currentWeather={currentWeather} />
-            <RecommendationsWidget itinerary={itinerary} />
+            <RecommendationShowcaseWidget itinerary={itinerary} />
           </div>
         </div>
 
@@ -853,14 +845,7 @@ function HotelDetailView({
           src={hotel.image}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
-        <div className="absolute top-4 left-4 right-4 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={onBack}
-            className="w-10 h-10 rounded-full bg-white/85 backdrop-blur flex items-center justify-center text-primary shadow-sm"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
+        <div className="absolute top-4 right-4 flex items-center justify-end">
           <button
             type="button"
             className="w-10 h-10 rounded-full bg-white/85 backdrop-blur flex items-center justify-center text-primary shadow-sm"
@@ -1196,17 +1181,40 @@ function HotelReviewDetailView({
   );
 }
 
-function BookingSidebar({ itinerary, paymentState, onPayment }: {
+function BookingSidebar({ itinerary }: {
   itinerary: FinalItinerary | null;
   title: string;
-  paymentState: 'idle' | 'processing' | 'success';
-  onPayment: () => void;
 }) {
+  type PassengerFormState = {
+    name: string;
+    role: string;
+    countLabel: string;
+  };
+
   const [isOpen, setIsOpen] = useState(false);
   const [isHotelPickerOpen, setIsHotelPickerOpen] = useState(false);
   const [detailHotelId, setDetailHotelId] = useState<string | null>(null);
   const [isNestedDetailView, setIsNestedDetailView] = useState(false);
   const [selectedRoomByHotel, setSelectedRoomByHotel] = useState<Record<string, string>>({});
+  const [passengers, setPassengers] = useState<Array<PassengerFormState & { id: string; completed: boolean }>>([
+    { id: 'primary', name: '张某某', role: '主要联系人', countLabel: '1位成人', completed: true },
+  ]);
+  const [passengerModalOpen, setPassengerModalOpen] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'wechat' | 'alipay'>('wechat');
+  const [paymentMode, setPaymentMode] = useState<'combined' | 'split'>('combined');
+  const [combinedPaymentState, setCombinedPaymentState] = useState<'idle' | 'processing' | 'success'>('idle');
+  const [splitPaymentState, setSplitPaymentState] = useState<{
+    flight: 'idle' | 'processing' | 'success';
+    hotel: 'idle' | 'processing' | 'success';
+  }>({
+    flight: 'idle',
+    hotel: 'idle',
+  });
+  const [newPassenger, setNewPassenger] = useState<PassengerFormState>({
+    name: '',
+    role: '同行旅客',
+    countLabel: '1位成人',
+  });
 
   const totalNights = itinerary?.days.length ?? 3;
   const flightPrice = itinerary?.recommended_flight
@@ -1558,12 +1566,72 @@ function BookingSidebar({ itinerary, paymentState, onPayment }: {
   const checkOutDateLabel = itinerary?.intent.return_date ? formatDT(itinerary.intent.return_date) : '11.15';
   const dateLabel = `${checkInDateLabel} - ${checkOutDateLabel}`;
   const guestsLabel = `${itinerary?.intent.travelers ?? 2}人, 1间`;
+  const handleCreatePassenger = useCallback(() => {
+    const name = newPassenger.name.trim();
+    if (!name) return;
+
+    setPassengers((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        name,
+        role: newPassenger.role.trim() || '同行旅客',
+        countLabel: newPassenger.countLabel.trim() || '1位成人',
+        completed: true,
+      },
+    ]);
+    setNewPassenger({ name: '', role: '同行旅客', countLabel: '1位成人' });
+    setPassengerModalOpen(false);
+  }, [newPassenger]);
+  const handleSplitPayment = useCallback((target: 'flight' | 'hotel') => {
+    setSplitPaymentState((prev) => ({ ...prev, [target]: 'processing' }));
+    window.setTimeout(() => {
+      setSplitPaymentState((prev) => ({ ...prev, [target]: 'success' }));
+    }, 1200);
+  }, []);
+  const handleCombinedPayment = useCallback(() => {
+    setCombinedPaymentState('processing');
+    window.setTimeout(() => {
+      setCombinedPaymentState('success');
+    }, 1200);
+  }, []);
+  const allSplitPaymentsComplete = splitPaymentState.flight === 'success' && splitPaymentState.hotel === 'success';
+
+  useEffect(() => {
+    if (paymentMode === 'split') {
+      setCombinedPaymentState('idle');
+    }
+  }, [paymentMode]);
+
+  useEffect(() => {
+    const openBookingPanel = () => {
+      setDetailHotelId(null);
+      setIsHotelPickerOpen(false);
+      setIsOpen(true);
+    };
+
+    const openRecommendedHotelDetails = () => {
+      const recommendedHotelId = hotelOptions[0]?.id ?? 'recommended';
+      setSelectedHotelId(recommendedHotelId);
+      setDetailHotelId(recommendedHotelId);
+      setIsHotelPickerOpen(false);
+      setIsOpen(true);
+    };
+
+    window.addEventListener('open-booking-panel', openBookingPanel);
+    window.addEventListener('open-recommended-hotel-details', openRecommendedHotelDetails);
+
+    return () => {
+      window.removeEventListener('open-booking-panel', openBookingPanel);
+      window.removeEventListener('open-recommended-hotel-details', openRecommendedHotelDetails);
+    };
+  }, [hotelOptions]);
 
   return (
     <>
       {/* Floating Trigger Button */}
       <AnimatePresence>
-        {!isOpen && (
+        {false && !isOpen && (
           <motion.button
             key="booking-trigger"
             initial={{ opacity: 0, scale: 0.8, x: 20 }}
@@ -1571,11 +1639,32 @@ function BookingSidebar({ itinerary, paymentState, onPayment }: {
             exit={{ opacity: 0, scale: 0.8, x: 20 }}
             transition={{ duration: 0.2 }}
             onClick={() => setIsOpen(true)}
-            className="fixed right-6 bottom-24 z-30 flex items-center gap-2 bg-primary text-white pl-4 pr-5 py-3 rounded-full shadow-lg shadow-primary/30 hover:bg-primary-dim active:scale-95 transition-colors"
+            className="fixed right-6 bottom-24 z-30 w-[240px] rounded-[26px] overflow-hidden bg-gradient-to-br from-primary via-primary to-primary-dim text-white shadow-[0_18px_40px_rgba(70,76,95,0.28)] hover:shadow-[0_22px_48px_rgba(70,76,95,0.34)] active:scale-[0.98] transition-all text-left"
             aria-label="打开预订面板"
           >
-            <ShoppingCart className="w-4 h-4" />
-            <span className="text-xs font-bold tracking-wide">确认预订</span>
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.18),transparent_34%)] pointer-events-none" />
+            <div className="relative px-4 py-3.5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black tracking-[0.2em] uppercase text-white/70">Recommended Booking</p>
+                  <h3 className="mt-1 text-lg font-headline font-extrabold tracking-tight text-white">机票 + 酒店预订</h3>
+                  <p className="mt-1 text-[11px] text-white/80 leading-relaxed">查看系统推荐的航班、酒店和支付方案</p>
+                </div>
+                <div className="w-11 h-11 rounded-2xl bg-white/14 backdrop-blur border border-white/15 flex items-center justify-center shadow-inner">
+                  <ShoppingCart className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-2 text-[10px] font-bold text-white/85">
+                <div className="inline-flex items-center gap-1 rounded-full bg-white/12 px-2.5 py-1 border border-white/12">
+                  <PlaneTakeoff className="w-3 h-3" />
+                  <span>航班推荐</span>
+                </div>
+                <div className="inline-flex items-center gap-1 rounded-full bg-white/12 px-2.5 py-1 border border-white/12">
+                  <Building2 className="w-3 h-3" />
+                  <span>酒店推荐</span>
+                </div>
+              </div>
+            </div>
           </motion.button>
         )}
       </AnimatePresence>
@@ -1827,29 +1916,38 @@ function BookingSidebar({ itinerary, paymentState, onPayment }: {
                     <span className="text-[10px] font-label font-bold text-outline uppercase tracking-[0.12em]">
                       旅客
                     </span>
-                    <button className="text-[10px] font-bold text-primary flex items-center gap-1 hover:underline">
+                    <button
+                      type="button"
+                      onClick={() => setPassengerModalOpen(true)}
+                      className="text-[10px] font-bold text-primary flex items-center gap-1 hover:underline"
+                    >
                       <Plus className="w-3 h-3" />
                       新增旅客
                     </button>
                   </div>
                   <div className="space-y-2">
-                    <div className="flex items-center gap-3 px-4 py-3 bg-surface-container-lowest rounded-2xl ring-1 ring-outline-variant/10 shadow-[0_4px_20px_rgb(0,0,0,0.02)]">
-                      <div className="w-9 h-9 rounded-xl bg-surface-container flex items-center justify-center flex-shrink-0">
-                        <User className="w-4 h-4 text-primary" />
+                    {passengers.map((passenger) => (
+                      <div
+                        key={passenger.id}
+                        className="flex items-center gap-3 px-4 py-3 bg-surface-container-lowest rounded-2xl ring-1 ring-outline-variant/10 shadow-[0_4px_20px_rgb(0,0,0,0.02)]"
+                      >
+                        <div className="w-9 h-9 rounded-xl bg-surface-container flex items-center justify-center flex-shrink-0">
+                          <User className="w-4 h-4 text-primary" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold text-on-surface">{passenger.name}</p>
+                          <p className="text-[11px] text-on-surface-variant mt-0.5">{passenger.role} · {passenger.countLabel}</p>
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 whitespace-nowrap">
+                          <Check className="w-3 h-3" />
+                          {passenger.completed ? '已完善' : '待补充'}
+                        </div>
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold text-on-surface">张某某</p>
-                        <p className="text-[11px] text-on-surface-variant mt-0.5">主要联系人 · 1位成人</p>
-                      </div>
-                      <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 whitespace-nowrap">
-                        <Check className="w-3 h-3" />
-                        已完善
-                      </div>
-                    </div>
+                    ))}
                     <div className="grid grid-cols-2 gap-2">
                       <div className="rounded-2xl bg-surface-container px-3 py-3">
                         <p className="text-[9px] font-label font-bold text-outline uppercase tracking-wider">支付方式</p>
-                        <p className="text-xs font-bold text-on-surface mt-1">组合付款</p>
+                        <p className="text-xs font-bold text-on-surface mt-1">{paymentMethod === 'wechat' ? '微信支付' : '支付宝支付'}</p>
                       </div>
                       <div className="rounded-2xl bg-surface-container px-3 py-3">
                         <p className="text-[9px] font-label font-bold text-outline uppercase tracking-wider">确认时限</p>
@@ -1879,30 +1977,164 @@ function BookingSidebar({ itinerary, paymentState, onPayment }: {
                     <p className="text-[10px] text-outline mt-0.5">酒店 ¥{hotelTotalPrice.toLocaleString()}</p>
                   </div>
                 </div>
-                <div className="flex gap-2 mb-3">
+                <div className="mb-4 rounded-[24px] border border-outline-variant/15 bg-gradient-to-br from-surface-container-lowest to-surface-container-low p-4 shadow-[0_10px_30px_rgba(87,94,112,0.06)]">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <p className="text-[10px] font-bold text-outline uppercase tracking-widest">支付方式</p>
+                      <p className="text-[11px] text-on-surface-variant mt-1">选择你偏好的付款渠道</p>
+                    </div>
+                    <div className="text-[10px] font-bold text-primary bg-primary/8 px-2.5 py-1 rounded-full">
+                      {paymentMethod === 'wechat' ? '微信支付' : '支付宝支付'}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('wechat')}
+                      className={`rounded-[22px] border p-3 text-left transition-all ${
+                        paymentMethod === 'wechat'
+                          ? 'bg-[#e9fbf3] border-[#22c55e]/30 shadow-[0_10px_24px_rgba(34,197,94,0.16)]'
+                          : 'bg-white/90 border-outline-variant/20 hover:border-primary/20'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-2xl bg-white shadow-sm border border-outline-variant/10 flex items-center justify-center overflow-hidden">
+                          <img src="/images/wechat.png" alt="微信支付" className="w-7 h-7 object-contain" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-on-surface">微信支付</p>
+                          <p className="text-[11px] text-on-surface-variant mt-0.5">推荐移动端快速付款</p>
+                        </div>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('alipay')}
+                      className={`rounded-[22px] border p-3 text-left transition-all ${
+                        paymentMethod === 'alipay'
+                          ? 'bg-[#eef4ff] border-[#3b82f6]/30 shadow-[0_10px_24px_rgba(59,130,246,0.16)]'
+                          : 'bg-white/90 border-outline-variant/20 hover:border-primary/20'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-2xl bg-white shadow-sm border border-outline-variant/10 flex items-center justify-center overflow-hidden">
+                          <img src="/images/alipay.png" alt="支付宝支付" className="w-7 h-7 object-contain" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-on-surface">支付宝支付</p>
+                          <p className="text-[11px] text-on-surface-variant mt-0.5">适合分开支付与转账</p>
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-[0.95fr_1.25fr] gap-3 mb-3">
                   <button
-                    onClick={() => setIsOpen(false)}
-                    className="flex-1 bg-secondary-container text-on-secondary-container py-3 rounded-xl font-headline font-bold text-xs hover:opacity-90 transition-all"
+                    type="button"
+                    onClick={() => setPaymentMode('split')}
+                    className={`py-3.5 rounded-2xl font-headline font-bold text-sm transition-all ${
+                      paymentMode === 'split'
+                        ? 'bg-secondary-container text-on-secondary-container ring-1 ring-primary/15 shadow-[0_10px_24px_rgba(87,94,112,0.1)]'
+                        : 'bg-surface-container-low text-on-surface-variant hover:bg-secondary-container/70'
+                    }`}
                   >
                     分开支付
                   </button>
                   <button
-                    onClick={onPayment}
-                    disabled={paymentState !== 'idle'}
-                    className={`flex-[1.35] py-3 rounded-xl font-headline font-bold text-xs transition-all ${
-                      paymentState === 'success'
+                    type="button"
+                    onClick={() => {
+                      if (paymentMode === 'split') {
+                        setPaymentMode('combined');
+                        return;
+                      }
+                      handleCombinedPayment();
+                    }}
+                    disabled={paymentMode === 'combined' && combinedPaymentState !== 'idle'}
+                    className={`py-3.5 rounded-2xl font-headline font-bold text-sm transition-all ${
+                      combinedPaymentState === 'success'
                         ? 'bg-emerald-500 text-white'
-                        : 'bg-primary text-white shadow-lg shadow-primary/20 hover:bg-primary-dim'
+                        : paymentMethod === 'wechat'
+                          ? 'bg-[#22c55e] text-white shadow-lg shadow-[#22c55e]/20 hover:bg-[#16a34a]'
+                          : 'bg-[#2563eb] text-white shadow-lg shadow-[#2563eb]/20 hover:bg-[#1d4ed8]'
                     } disabled:opacity-60`}
                   >
-                    {paymentState === 'idle'
-                      ? '组合支付'
-                      : paymentState === 'processing'
+                    {paymentMode === 'split'
+                      ? '切换组合支付'
+                      : combinedPaymentState === 'idle'
+                        ? '组合支付'
+                        : combinedPaymentState === 'processing'
                         ? <Loader2 className="w-5 h-5 animate-spin mx-auto" />
                         : '支付成功'
                     }
                   </button>
                 </div>
+                {paymentMode === 'split' && (
+                  <div className="mb-3 space-y-3">
+                    <div className="rounded-[22px] bg-surface-container-low px-4 py-3 border border-outline-variant/15">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-bold text-on-surface">已选择分开支付</p>
+                          <p className="text-[11px] text-on-surface-variant mt-1">
+                            航班与酒店可分别使用{paymentMethod === 'wechat' ? '微信支付' : '支付宝支付'}完成付款。
+                          </p>
+                        </div>
+                        <div className={`text-[10px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap ${
+                          allSplitPaymentsComplete ? 'text-emerald-700 bg-emerald-50' : 'text-primary bg-white/80'
+                        }`}>
+                          {allSplitPaymentsComplete ? '已全部支付' : 'Split Mode'}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-[22px] border border-outline-variant/15 bg-white p-4 shadow-[0_10px_30px_rgba(87,94,112,0.06)]">
+                        <p className="text-[10px] font-bold text-outline uppercase tracking-widest">航班支付</p>
+                        <p className="text-xl font-headline font-extrabold text-primary mt-2">¥{flightPrice.toLocaleString()}</p>
+                        <p className="text-[11px] text-on-surface-variant mt-1">使用{paymentMethod === 'wechat' ? '微信支付' : '支付宝支付'}支付航班</p>
+                        <button
+                          type="button"
+                          onClick={() => handleSplitPayment('flight')}
+                          disabled={splitPaymentState.flight !== 'idle'}
+                          className={`mt-4 w-full py-2.5 rounded-2xl font-bold text-xs transition-all ${
+                            splitPaymentState.flight === 'success'
+                              ? 'bg-emerald-500 text-white'
+                              : paymentMethod === 'wechat'
+                                ? 'bg-[#22c55e] text-white'
+                                : 'bg-[#2563eb] text-white'
+                          } disabled:opacity-70`}
+                        >
+                          {splitPaymentState.flight === 'idle'
+                            ? '支付航班'
+                            : splitPaymentState.flight === 'processing'
+                              ? '支付中...'
+                              : '航班已支付'}
+                        </button>
+                      </div>
+                      <div className="rounded-[22px] border border-outline-variant/15 bg-white p-4 shadow-[0_10px_30px_rgba(87,94,112,0.06)]">
+                        <p className="text-[10px] font-bold text-outline uppercase tracking-widest">酒店支付</p>
+                        <p className="text-xl font-headline font-extrabold text-primary mt-2">¥{hotelTotalPrice.toLocaleString()}</p>
+                        <p className="text-[11px] text-on-surface-variant mt-1">使用{paymentMethod === 'wechat' ? '微信支付' : '支付宝支付'}支付酒店</p>
+                        <button
+                          type="button"
+                          onClick={() => handleSplitPayment('hotel')}
+                          disabled={splitPaymentState.hotel !== 'idle'}
+                          className={`mt-4 w-full py-2.5 rounded-2xl font-bold text-xs transition-all ${
+                            splitPaymentState.hotel === 'success'
+                              ? 'bg-emerald-500 text-white'
+                              : paymentMethod === 'wechat'
+                                ? 'bg-[#22c55e] text-white'
+                                : 'bg-[#2563eb] text-white'
+                          } disabled:opacity-70`}
+                        >
+                          {splitPaymentState.hotel === 'idle'
+                            ? '支付酒店'
+                            : splitPaymentState.hotel === 'processing'
+                              ? '支付中...'
+                              : '酒店已支付'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center justify-between text-[10px] text-outline">
                   <div className="inline-flex items-center gap-1.5">
                     <Clock className="w-3 h-3" />
@@ -1918,6 +2150,92 @@ function BookingSidebar({ itinerary, paymentState, onPayment }: {
               )}
             </div>
           </motion.aside>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {passengerModalOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setPassengerModalOpen(false)}
+              className="fixed inset-0 z-[60] bg-black/25 backdrop-blur-[2px]"
+            />
+            <motion.div
+              initial={{ opacity: 0, y: 28, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 28, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-x-4 bottom-6 z-[70] sm:left-auto sm:right-6 sm:w-[388px] rounded-[28px] bg-white border border-outline-variant/20 shadow-[0_24px_80px_rgba(25,28,30,0.2)] p-5"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-lg font-headline font-extrabold text-primary">新增旅客</h3>
+                  <p className="text-[11px] text-on-surface-variant mt-1">填写旅客信息后将加入预订列表</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPassengerModalOpen(false)}
+                  className="w-8 h-8 rounded-full bg-surface-container-low flex items-center justify-center text-primary"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <label className="block">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-outline">姓名</span>
+                  <input
+                    type="text"
+                    value={newPassenger.name}
+                    onChange={(event) => setNewPassenger((prev) => ({ ...prev, name: event.target.value }))}
+                    placeholder="例如 王小明"
+                    className="mt-2 w-full h-11 rounded-2xl border border-outline-variant/20 bg-surface-container-low px-4 text-sm text-on-surface outline-none focus:border-primary/40"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-outline">身份</span>
+                  <input
+                    type="text"
+                    value={newPassenger.role}
+                    onChange={(event) => setNewPassenger((prev) => ({ ...prev, role: event.target.value }))}
+                    placeholder="例如 同行旅客"
+                    className="mt-2 w-full h-11 rounded-2xl border border-outline-variant/20 bg-surface-container-low px-4 text-sm text-on-surface outline-none focus:border-primary/40"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-outline">人数说明</span>
+                  <input
+                    type="text"
+                    value={newPassenger.countLabel}
+                    onChange={(event) => setNewPassenger((prev) => ({ ...prev, countLabel: event.target.value }))}
+                    placeholder="例如 1位成人"
+                    className="mt-2 w-full h-11 rounded-2xl border border-outline-variant/20 bg-surface-container-low px-4 text-sm text-on-surface outline-none focus:border-primary/40"
+                  />
+                </label>
+              </div>
+
+              <div className="flex gap-3 mt-5">
+                <button
+                  type="button"
+                  onClick={() => setPassengerModalOpen(false)}
+                  className="flex-1 py-3 rounded-2xl bg-surface-container-low text-on-surface font-bold text-sm"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreatePassenger}
+                  disabled={!newPassenger.name.trim()}
+                  className="flex-[1.2] py-3 rounded-2xl bg-primary text-on-primary font-bold text-sm shadow-lg shadow-primary/20 disabled:opacity-40"
+                >
+                  保存旅客
+                </button>
+              </div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </>
@@ -2079,6 +2397,137 @@ function RecommendationsWidget({ itinerary }: { itinerary: FinalItinerary | null
           ¥{itinerary?.recommended_hotel ? Math.round(itinerary.recommended_hotel.price_per_night_cny) : '300'} / 晚起
         </p>
       </div>
+    </div>
+  );
+}
+
+function RecommendationShowcaseWidget({ itinerary }: { itinerary: FinalItinerary | null }) {
+  const openBookingPanel = () => {
+    window.dispatchEvent(new CustomEvent('open-booking-panel'));
+  };
+
+  const openHotelDetails = () => {
+    window.dispatchEvent(new CustomEvent('open-recommended-hotel-details'));
+  };
+
+  const hotelName = itinerary?.recommended_hotel?.name ?? '洱海云端精品民宿';
+  const hotelPrice = itinerary?.recommended_hotel ? Math.round(itinerary.recommended_hotel.price_per_night_cny) : 300;
+  const hotelArea = itinerary?.recommended_hotel?.area ?? '大理古村码头附近';
+  const hotelRating = itinerary?.recommended_hotel?.stars ? itinerary.recommended_hotel.stars.toFixed(1) : '4.9';
+  const hotelTags = itinerary?.recommended_hotel?.highlights?.slice(0, 3) ?? ['洱海海景', '设计师民宿', '免费早餐'];
+  const hotelDescription = itinerary?.recommended_hotel?.booking_tip ?? '坐落于洱海之畔，推窗见海，感受苍山洱海的宁静与美好。';
+  const hotelImage = 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1400&q=80';
+
+  return (
+    <div className="space-y-4">
+      <h4 className="text-xs font-bold text-on-surface-variant flex items-center gap-2 uppercase tracking-wider">
+        <ThumbsUp className="w-4 h-4" />
+        系统推荐
+      </h4>
+      <div className="bg-surface-container-low p-4 rounded-xl hover:bg-surface-container-high transition-colors cursor-pointer border border-outline-variant/10">
+        <div className="flex items-center gap-2 mb-2">
+          <Train className="w-4 h-4 text-primary" />
+          <span className="text-[10px] font-bold uppercase tracking-wider text-primary">交通推荐</span>
+        </div>
+        <p className="text-sm font-semibold text-on-surface">
+          {itinerary?.recommended_flight
+            ? `${itinerary.intent.origin_city} → ${itinerary.intent.dest_city} ${itinerary.recommended_flight.airline}`
+            : '昆明南 - 大理 高铁动车'}
+        </p>
+        <p className="text-xs text-primary font-bold mt-1">
+          ¥{itinerary?.recommended_flight ? Math.round(itinerary.recommended_flight.price_cny) : '1200'} / 人
+        </p>
+      </div>
+      <motion.div
+        whileHover={{ y: -2 }}
+        transition={{ duration: 0.2 }}
+        className="relative overflow-hidden rounded-[24px] border border-white/20 shadow-[0_16px_36px_rgba(49,65,101,0.18)]"
+      >
+        <div className="absolute inset-0">
+          <img
+            src={hotelImage}
+            alt={hotelName}
+            className="h-full w-full object-cover"
+            draggable={false}
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-[#5676aa]/32 via-[#364667]/52 to-[#252f45]/86" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.24),transparent_34%)]" />
+        </div>
+
+        <div className="relative flex min-h-[206px] flex-col justify-between p-4 text-white">
+          <div className="flex items-start justify-between gap-3">
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-white/18 px-2.5 py-1 text-[10px] font-bold backdrop-blur-md border border-white/15">
+              <Hotel className="h-3.5 w-3.5" />
+              <span>精选民宿</span>
+            </div>
+            <button
+              type="button"
+              onClick={openBookingPanel}
+              className="flex h-10 w-10 items-center justify-center rounded-[18px] border border-white/20 bg-white/12 backdrop-blur-md transition-all hover:bg-white/18 active:scale-95"
+              aria-label="打开预订面板"
+            >
+              <ShoppingCart className="h-4.5 w-4.5" />
+            </button>
+          </div>
+
+          <div className="max-w-[390px] space-y-2.5">
+            <div>
+              <h5 className="text-[22px] sm:text-[24px] font-headline font-extrabold leading-tight tracking-tight text-white drop-shadow-[0_6px_24px_rgba(0,0,0,0.28)]">
+                {hotelName}
+              </h5>
+              <p className="mt-1 text-lg font-black tracking-tight text-white/95">
+                ¥{hotelPrice}
+                <span className="ml-1 text-sm font-bold text-white/80">/ 晚起</span>
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {hotelTags.map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-full border border-white/12 bg-white/14 px-2.5 py-1 text-[10px] font-semibold text-white/92 backdrop-blur-md"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+
+            <p className="max-w-[420px] text-[13px] leading-6 text-white/88 line-clamp-2">
+              {hotelDescription}
+            </p>
+
+            <div className="flex flex-wrap items-center gap-3 text-[13px] font-semibold text-white/88">
+              <div className="inline-flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5" />
+                <span>{hotelArea}</span>
+              </div>
+              <div className="inline-flex items-center gap-1.5">
+                <Star className="h-3.5 w-3.5 fill-current" />
+                <span>{hotelRating}（128条评价）</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2.5">
+            <button
+              type="button"
+              onClick={openBookingPanel}
+              className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2.5 text-[13px] font-bold text-primary shadow-[0_8px_18px_rgba(255,255,255,0.16)] transition-all hover:-translate-y-0.5 active:scale-95"
+            >
+              <PlaneTakeoff className="h-3.5 w-3.5" />
+              <span>航班推荐</span>
+            </button>
+            <button
+              type="button"
+              onClick={openHotelDetails}
+              className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-2.5 text-[13px] font-bold text-white backdrop-blur-md transition-all hover:bg-white/16 active:scale-95"
+            >
+              <Building2 className="h-3.5 w-3.5" />
+              <span>查看房型</span>
+            </button>
+          </div>
+        </div>
+      </motion.div>
     </div>
   );
 }
