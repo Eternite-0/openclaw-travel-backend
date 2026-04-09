@@ -61,6 +61,8 @@ export function ItineraryView({
 
   useEffect(() => {
     if (!itinerary) return;
+    const isDemo = (itinerary.task_id ?? '').startsWith('demo-task-');
+    if (isDemo) return;
     const timer = window.setTimeout(() => {
       itinerary.days.forEach((day) => {
         day.activities.forEach((act) => {
@@ -316,7 +318,12 @@ export function ItineraryView({
 
           {/* Right Widgets */}
           <div className="lg:col-span-4 space-y-4 md:space-y-6">
-            <DayRouteMap activities={currentDay?.activities ?? []} dayNumber={activeDay} city={destCity} />
+            <DayRouteMap
+              activities={currentDay?.activities ?? []}
+              dayNumber={activeDay}
+              itineraryDays={itinerary?.days ?? []}
+              city={destCity}
+            />
             <WeatherWidget destCity={destCity} activeDay={activeDay} currentWeather={currentWeather} />
             <RecommendationShowcaseWidget itinerary={itinerary} />
           </div>
@@ -399,6 +406,7 @@ function HotelSelectionView({
   onSelect,
   onConfirm,
   onViewDetails,
+  cityName,
   destinationLabel,
   dateLabel,
   guestsLabel,
@@ -408,6 +416,7 @@ function HotelSelectionView({
   onSelect: (hotelId: string) => void;
   onConfirm: () => void;
   onViewDetails: (hotelId: string) => void;
+  cityName: string;
   destinationLabel: string;
   dateLabel: string;
   guestsLabel: string;
@@ -493,7 +502,7 @@ function HotelSelectionView({
 
         <div className="mb-4 flex justify-between items-center px-1">
           <div>
-            <h3 className="text-lg font-extrabold text-primary tracking-tight">京都精选酒店</h3>
+            <h3 className="text-lg font-extrabold text-primary tracking-tight">{cityName}精选酒店</h3>
             <p className="text-on-surface-variant text-[11px]">{visibleHotels.length} 家符合条件</p>
           </div>
           <span className="text-[10px] font-bold text-primary bg-primary-fixed px-2 py-1 rounded-full uppercase tracking-wider">综合排序</span>
@@ -1218,6 +1227,14 @@ function BookingSidebar({ itinerary }: {
     countLabel: '1位成人',
   });
 
+  const toFlightTime = (raw?: string) => {
+    if (!raw) return '--:--';
+    if (/^\d{1,2}:\d{2}$/.test(raw)) return raw;
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return raw;
+    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  };
+
   const totalNights = itinerary?.days.length ?? 3;
   const flightPrice = itinerary?.recommended_flight
     ? Math.round(itinerary.recommended_flight.price_cny)
@@ -1228,291 +1245,169 @@ function BookingSidebar({ itinerary }: {
       || itinerary.recommended_hotel.price_per_night_cny * totalNights,
     )
     : 1840;
-  const departureTime = itinerary?.recommended_flight?.departure_time ? formatDT(itinerary.recommended_flight.departure_time) : '14:20';
-  const arrivalTime = itinerary?.recommended_flight?.arrival_time ? formatDT(itinerary.recommended_flight.arrival_time) : '17:35';
+  const departureTime = toFlightTime(itinerary?.recommended_flight?.departure_time) || '14:20';
+  const arrivalTime = toFlightTime(itinerary?.recommended_flight?.arrival_time) || '17:35';
   const durationLabel = itinerary?.recommended_flight?.duration_hours
     ? `${Math.floor(itinerary.recommended_flight.duration_hours)}H ${Math.round((itinerary.recommended_flight.duration_hours % 1) * 60)}M`
     : '3H 15M';
-  const originCity = itinerary?.intent.origin_city ?? '上海';
-  const destCity = itinerary?.intent.dest_city ?? '昆明';
+  const originCity = itinerary?.intent.origin_city ?? '湛江';
+  const destCity = itinerary?.intent.dest_city ?? '北京';
   const flightCode = itinerary?.recommended_flight?.flight_number ?? 'MU5798';
 
   const hotelOptions = useMemo<SelectableHotel[]>(() => {
-    const recommendedName = itinerary?.recommended_hotel?.name ?? `${destCity} Holiday Inn`;
+    const recommendedName = itinerary?.recommended_hotel?.name ?? '北京东方景观酒店';
     const recommendedRating = itinerary?.recommended_hotel?.stars
       ? Math.min(5, Math.max(4.2, itinerary.recommended_hotel.stars))
       : 4.8;
+    const recommendedNightPrice = Math.round(baseHotelTotalPrice / Math.max(totalNights, 1));
+
+    const assetBase = '/booking/hotels';
+    const makeReview = (prefix: string, score: number, label: string): SelectableHotel['review'] => ({
+      score,
+      label,
+      quotes: [
+        { text: '地理位置很方便，服务反应快，整体入住体验稳定。', author: '旅行用户A' },
+        { text: '房间安静，适合连续多天城市行程。', author: '旅行用户B' },
+      ],
+      breakdown: [
+        { label: 'Clean', score: Math.min(5, score + 0.1) },
+        { label: 'Service', score: score },
+        { label: 'Locale', score: Math.min(5, score + 0.1) },
+        { label: 'Value', score: Math.max(4.4, score - 0.1) },
+      ],
+      entries: [
+        {
+          author: '王晓晴',
+          meta: '2026-03-16 · 已验证入住',
+          title: '位置优越，出行非常方便',
+          body: '去热门景点和商圈都很顺，房间整洁，前台服务效率高，整体体验很稳。',
+          rating: 5,
+          sentiment: 'good',
+          avatar: `${assetBase}/${prefix}/review-avatar-1.png`,
+          tags: [{ label: '交通便利', tone: 'positive' }],
+          gallery: [`${assetBase}/${prefix}/review-gallery-1.png`, `${assetBase}/${prefix}/review-gallery-2.png`],
+        },
+        {
+          author: '李承泽',
+          meta: '2026-02-28 · 商务出行',
+          title: '总体满意，早餐高峰稍拥挤',
+          body: '整体服务和房间质量都不错，早餐高峰期人稍多，错峰体验更好。',
+          rating: 4,
+          sentiment: 'poor',
+          avatar: `${assetBase}/${prefix}/review-avatar-2.png`,
+          tags: [{ label: '早餐高峰', tone: 'negative' }],
+        },
+      ],
+    });
 
     return [
       {
         id: 'recommended',
         name: recommendedName,
-        subtitle: `${destCity}柏悦酒店`,
+        subtitle: '北京柏悦风格商务酒店',
         area: itinerary?.recommended_hotel?.area ?? `${destCity}核心区域`,
-        locationLabel: `${itinerary?.recommended_hotel?.area ?? `${destCity}核心区域`}, ${destCity}, ${itinerary?.intent.dest_country ?? 'Japan'}`,
+        locationLabel: `${itinerary?.recommended_hotel?.area ?? `${destCity}核心区域`}, ${destCity}, ${itinerary?.intent.dest_country ?? '中国'}`,
         themeLabel: 'Luxury Heritage',
         rating: recommendedRating,
-        pricePerNightCny: Math.round(baseHotelTotalPrice / Math.max(totalNights, 1)),
+        pricePerNightCny: recommendedNightPrice,
         totalPriceCny: baseHotelTotalPrice,
         bookingTip: itinerary?.recommended_hotel?.booking_tip ?? '舒适高分酒店，适合城市漫游与短住。',
         highlights: itinerary?.recommended_hotel?.highlights?.slice(0, 3) ?? ['含早餐', '免费取消', '近商圈'],
-        image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAZAVDAS5vry2vxBq9L2Cv3FjC44Po466vDUriL4CS9mhTTsfauAjDSeM2bBgSdsfxNiFLP446RRR2SPLoWWRnLUooYiLch5HkjfvVyi6LPSTWvvGpe-qqBV1xQnV24Ybo-i0vxk6eNMu4tm3DYf1C4StTh8PEZtzdyJY6804WcjSY-b1oJrPBqEqfTKQa-GIwS9bxKLpmNtWXiqlYm7ISzbVYGxB09tTgz3lTZ347YLLFFr-BSCW9tPlsP7Lm6Y67S4d4-4F7emWE',
+        image: `${assetBase}/recommended/cover.png`,
         badge: itinerary?.recommended_hotel?.stars ? `${itinerary.recommended_hotel.stars}星` : '精选',
         locationHighlights: [
-          { title: `${destCity}老城地标`, subtitle: '5 min walk', icon: 'castle' },
-          { title: '文化街区', subtitle: '8 min walk', icon: 'trees' },
+          { title: '东城核心地标', subtitle: '5 min walk', icon: 'castle' },
+          { title: '地铁双线换乘', subtitle: '7 min walk', icon: 'hotel' },
         ],
         amenities: ['Free Wi-Fi', 'Dining', 'Parking', 'Spa'],
         roomTypes: [
           {
             name: 'Deluxe King',
             description: `城景, 45sqm, 1 King bed`,
-            pricePerNightCny: Math.round(baseHotelTotalPrice / Math.max(totalNights, 1)),
-            image: 'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80',
+            pricePerNightCny: recommendedNightPrice,
+            image: `${assetBase}/recommended/room-deluxe-king.png`,
             badge: 'Best Seller',
           },
           {
             name: 'Executive Twin',
             description: `高楼层, 52sqm, 2 Twin beds`,
-            pricePerNightCny: Math.round(baseHotelTotalPrice / Math.max(totalNights, 1)) + 320,
-            image: 'https://images.unsplash.com/photo-1551882547-ff40c63fe5fa?auto=format&fit=crop&w=1200&q=80',
+            pricePerNightCny: recommendedNightPrice + 320,
+            image: `${assetBase}/recommended/room-executive-twin.png`,
           },
         ],
-        review: {
-          score: recommendedRating,
-          label: 'Exceptional',
-          quotes: [
-            { text: 'The location is convenient and the room feels calm after a full day out.', author: 'Lina C.' },
-            { text: 'Great balance between comfort, service and value for a city stay.', author: 'Marcus T.' },
-          ],
-          breakdown: [
-            { label: 'Clean', score: 5.0 },
-            { label: 'Service', score: 4.9 },
-            { label: 'Locale', score: 5.0 },
-            { label: 'Value', score: 4.8 },
-          ],
-          entries: [
-            {
-              author: 'Alexandra Chen',
-              meta: 'Oct 12, 2023 • Verified Stay',
-              title: 'Amazing service and convenient city access',
-              body: 'The attention to detail here is excellent. Staff were proactive, and the room felt calm and polished after long days exploring the city.',
-              rating: 5,
-              sentiment: 'good',
-              avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=200&q=80',
-              tags: [
-                { label: 'EXCELLENT LOCATION', tone: 'positive' },
-                { label: 'SMOOTH CHECK-IN', tone: 'positive' },
-              ],
-            },
-            {
-              author: 'Marcus Tan',
-              meta: 'Sep 28, 2023 • Solo Traveler',
-              title: 'Strong value with only minor breakfast delays',
-              body: 'The hotel is stylish and efficient. Breakfast got crowded around peak time, but overall service and comfort still made the stay feel premium.',
-              rating: 4,
-              sentiment: 'poor',
-              avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80',
-              tags: [
-                { label: 'BREAKFAST QUEUE', tone: 'negative' },
-                { label: 'QUIET ROOMS', tone: 'positive' },
-              ],
-            },
-            {
-              author: 'Sienna Mori',
-              meta: 'Aug 15, 2023 • Verified Stay',
-              title: 'Comfortable and easy to settle into',
-              body: 'A very balanced stay overall. Good light, restful rooms, and a location that makes moving around the destination very easy.',
-              rating: 5,
-              sentiment: 'good',
-              avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=200&q=80',
-              gallery: [
-                'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=300&q=80',
-                'https://images.unsplash.com/photo-1551882547-ff40c63fe5fa?auto=format&fit=crop&w=300&q=80',
-              ],
-            },
-          ],
-        },
+        review: makeReview('recommended', recommendedRating, 'Exceptional'),
       },
       {
-        id: 'ritz',
-        name: 'The Ritz-Carlton, Kyoto',
-        subtitle: '京都丽思卡尔顿酒店',
-        area: '鸭川河畔',
-        locationLabel: 'Kamogawa Riverside, Kyoto, Japan',
-        themeLabel: 'Riverfront Luxury',
+        id: 'waldorf',
+        name: '北京华尔道夫酒店',
+        subtitle: '王府井奢华地标酒店',
+        area: '王府井商圈',
+        locationLabel: '王府井商圈, 北京, 中国',
+        themeLabel: 'Urban Luxury',
         rating: 4.8,
-        pricePerNightCny: 7200,
-        totalPriceCny: 7200 * totalNights,
-        bookingTip: '坐落于鸭川河畔，不仅拥有如画风景，更提供顶级日式管家服务。',
-        highlights: ['含早餐', '免费取消', '河景房'],
-        image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAb5RG0eCg7GlKTBSBId_PHdj8B1zfYnkm9z6JMjf4zaVRAc-8CgZxfCU4bBVTqYJq8CCoez6UQ22-eDLMsLD1OgU9hpaBpkSVHKMAzHL4L7genBMShpF_SOmcg-FyNGPjuPLjB7sagb_bFP46QT-WSvwl2vel9uMr6A9zAazrZ1-SD9ZJmza41zx3lFovgNo8eQTqsa_vS8daSkXLd1sVQflNuD3PHmy4xh-ohxeuvFjtOgSt5jcSGBVqXuPH68RBrY63qWp8fEgU',
+        pricePerNightCny: 2880,
+        totalPriceCny: 2880 * totalNights,
+        bookingTip: '步行可达王府井核心区，商务与休闲都方便。',
+        highlights: ['含早餐', '行政酒廊', '王府井步行可达'],
+        image: `${assetBase}/waldorf/cover.png`,
         badge: '奢华',
         locationHighlights: [
-          { title: 'Kamogawa River', subtitle: '2 min walk', icon: 'trees' },
-          { title: 'Gion District', subtitle: '10 min drive', icon: 'castle' },
+          { title: '王府井步行街', subtitle: '6 min walk', icon: 'trees' },
+          { title: '地铁1号线', subtitle: '8 min walk', icon: 'hotel' },
         ],
         amenities: ['Free Wi-Fi', 'Dining', 'Spa', 'Butler'],
         roomTypes: [
           {
-            name: 'Garden Terrace King',
-            description: 'Garden view, 56sqm, 1 King bed',
-            pricePerNightCny: 7200,
-            image: 'https://images.unsplash.com/photo-1522798514-97ceb8c4f1c8?auto=format&fit=crop&w=1200&q=80',
+            name: 'Waldorf King',
+            description: '城景, 52sqm, 1 King bed',
+            pricePerNightCny: 2880,
+            image: `${assetBase}/waldorf/room-king.png`,
             badge: 'Popular',
           },
           {
-            name: 'River Suite',
-            description: 'River view, 78sqm, lounge access',
-            pricePerNightCny: 8900,
-            image: 'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=1200&q=80',
+            name: 'Premier Suite',
+            description: '高楼层, 78sqm, lounge access',
+            pricePerNightCny: 3520,
+            image: `${assetBase}/waldorf/room-suite.png`,
           },
         ],
-        review: {
-          score: 4.8,
-          label: 'World Class',
-          quotes: [
-            { text: 'Service is polished and the river setting makes the whole stay memorable.', author: 'Julianne V.' },
-            { text: 'Concierge support and dining were both exceptional.', author: 'Marc O.' },
-          ],
-          breakdown: [
-            { label: 'Clean', score: 5.0 },
-            { label: 'Service', score: 4.9 },
-            { label: 'Locale', score: 4.9 },
-            { label: 'Value', score: 4.7 },
-          ],
-          entries: [
-            {
-              author: 'Alexandra Chen',
-              meta: 'Oct 12, 2023 • Verified Stay',
-              title: 'Amazing service and unparalleled views',
-              body: 'The attention to detail here is extraordinary. The staff anticipated every need. The architecture blends modern luxury with traditional craftsmanship.',
-              rating: 5,
-              sentiment: 'good',
-              avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=200&q=80',
-              tags: [
-                { label: 'EXCELLENT LOCATION', tone: 'positive' },
-                { label: 'LUXURY INTERIOR', tone: 'positive' },
-              ],
-            },
-            {
-              author: 'Julian Vance',
-              meta: 'Sep 28, 2023 • Solo Traveler',
-              title: 'Stunning but some operational hiccups',
-              body: 'The hotel is a masterpiece. However, breakfast queue was 20 mins and some public areas were livelier than expected in the evening.',
-              rating: 4,
-              sentiment: 'poor',
-              avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80',
-              tags: [
-                { label: 'BREAKFAST QUEUE', tone: 'negative' },
-                { label: 'A BIT NOISY', tone: 'negative' },
-              ],
-            },
-            {
-              author: 'Sienna Mori',
-              meta: 'Aug 15, 2023 • Verified Stay',
-              title: 'A peaceful sanctuary in the heart of Kyoto',
-              body: 'Staying here felt like a private villa. Garden views are spectacular and dinner at Yasaka was a highlight.',
-              rating: 5,
-              sentiment: 'good',
-              avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=200&q=80',
-              gallery: [
-                'https://images.unsplash.com/photo-1522798514-97ceb8c4f1c8?auto=format&fit=crop&w=300&q=80',
-                'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=300&q=80',
-              ],
-            },
-          ],
-        },
+        review: makeReview('waldorf', 4.8, 'World Class'),
       },
       {
-        id: 'hoshinoya',
-        name: 'Hoshinoya Kyoto',
-        subtitle: '虹夕诺雅 京都',
-        area: '岚山景区',
-        locationLabel: 'Arashiyama Hillside, Kyoto, Japan',
-        themeLabel: 'Zen Retreat',
+        id: 'fourseasons',
+        name: '北京四季酒店',
+        subtitle: '燕莎商务与度假兼顾',
+        area: '燕莎商圈',
+        locationLabel: '燕莎商圈, 北京, 中国',
+        themeLabel: 'Modern Retreat',
         rating: 4.9,
-        pricePerNightCny: 6500,
-        totalPriceCny: 6500 * totalNights,
-        bookingTip: '乘坐私人船只开启隐居之旅，在岚山怀抱中享受禅意慢生活。',
-        highlights: ['含接驳', '免费取消', '近景区'],
-        image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDWJC1DnGNLISjOIZrBnW0zPJeuCfHiIg_Ashi6h-WKverh8VZSD11GeP84WVI_yZGtSyE3ys7vVHhApPXxaz8NXNjWIV10-foCZSt209ldhxSF8eTPnAiXeSFnbMMPYvUGL5F3qQ9EPXdB5jT3n1koGwJfqshkI5L8BWtyqIDYo6sN4BxbZInAyhz87eBcqIvnuaOW1PyZUrQ3o5JDyPz6t4Gi1m9W5hxBtoXQSONh8E6pswdp6I-yXVJfqfcyMvahu0NXD5XKycM',
+        pricePerNightCny: 2560,
+        totalPriceCny: 2560 * totalNights,
+        bookingTip: '靠近使馆区，环境安静，适合多天连住。',
+        highlights: ['室内泳池', '免费取消', '高评分服务'],
+        image: `${assetBase}/fourseasons/cover.png`,
         badge: '臻选',
         locationHighlights: [
-          { title: 'Arashiyama Bamboo Grove', subtitle: '6 min walk', icon: 'trees' },
-          { title: 'Private Boat Pier', subtitle: 'At hotel entrance', icon: 'hotel' },
+          { title: '使馆区', subtitle: '5 min drive', icon: 'castle' },
+          { title: '机场快线接驳点', subtitle: '10 min drive', icon: 'hotel' },
         ],
-        amenities: ['Free Wi-Fi', 'Dining', 'Onsen', 'Boat Transfer'],
+        amenities: ['Free Wi-Fi', 'Dining', 'Parking', 'Spa'],
         roomTypes: [
           {
-            name: 'River Pavilion',
-            description: 'River view, 58sqm, tatami living area',
-            pricePerNightCny: 6500,
-            image: 'https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?auto=format&fit=crop&w=1200&q=80',
+            name: 'Deluxe Skyline',
+            description: '城景, 50sqm, 1 King bed',
+            pricePerNightCny: 2560,
+            image: `${assetBase}/fourseasons/room-deluxe.png`,
             badge: 'Signature',
           },
           {
-            name: 'Hillside Suite',
-            description: 'Forest view, 72sqm, private lounge',
-            pricePerNightCny: 7600,
-            image: 'https://images.unsplash.com/photo-1445019980597-93fa8acb246c?auto=format&fit=crop&w=1200&q=80',
+            name: 'Executive Suite',
+            description: '行政楼层, 74sqm, 1 King bed',
+            pricePerNightCny: 3180,
+            image: `${assetBase}/fourseasons/room-suite.png`,
           },
         ],
-        review: {
-          score: 4.9,
-          label: 'Serene Escape',
-          quotes: [
-            { text: 'Arriving by boat makes the experience feel truly special.', author: 'Nadia P.' },
-            { text: 'Quiet, refined and deeply restorative after a busy itinerary.', author: 'Ken S.' },
-          ],
-          breakdown: [
-            { label: 'Clean', score: 5.0 },
-            { label: 'Service', score: 5.0 },
-            { label: 'Locale', score: 4.8 },
-            { label: 'Value', score: 4.7 },
-          ],
-          entries: [
-            {
-              author: 'Nadia Park',
-              meta: 'Nov 03, 2023 • Couple Trip',
-              title: 'Beautiful arrival and deeply calming stay',
-              body: 'The boat transfer sets the tone immediately. Once inside, everything feels quiet, thoughtful and beautifully paced.',
-              rating: 5,
-              sentiment: 'good',
-              avatar: 'https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?auto=format&fit=crop&w=200&q=80',
-              tags: [
-                { label: 'UNIQUE ARRIVAL', tone: 'positive' },
-                { label: 'ZEN ATMOSPHERE', tone: 'positive' },
-              ],
-            },
-            {
-              author: 'Ken Sato',
-              meta: 'Sep 11, 2023 • Verified Stay',
-              title: 'Refined and restorative',
-              body: 'A great property when you want a slower rhythm. Dining was very good, though transport into busier areas takes a bit more planning.',
-              rating: 5,
-              sentiment: 'poor',
-              avatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=200&q=80',
-              tags: [
-                { label: 'PEACEFUL', tone: 'positive' },
-                { label: 'REMOTE FEEL', tone: 'negative' },
-              ],
-            },
-            {
-              author: 'Mika Ito',
-              meta: 'Aug 21, 2023 • Verified Stay',
-              title: 'A hidden retreat with beautiful textures',
-              body: 'Loved the materials, the views, and the feeling of privacy. One of the most distinctive stays in Kyoto.',
-              rating: 5,
-              sentiment: 'good',
-              avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80',
-              gallery: [
-                'https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?auto=format&fit=crop&w=300&q=80',
-                'https://images.unsplash.com/photo-1445019980597-93fa8acb246c?auto=format&fit=crop&w=300&q=80',
-              ],
-            },
-          ],
-        },
+        review: makeReview('fourseasons', 4.9, 'Serene Escape'),
       },
     ];
   }, [itinerary, destCity, totalNights, baseHotelTotalPrice]);
@@ -1552,18 +1447,18 @@ function BookingSidebar({ itinerary }: {
   const detailHotel = hotelOptions.find(hotel => hotel.id === detailHotelId) ?? null;
   const selectedRoomName = selectedHotel ? selectedRoomByHotel[selectedHotel.id] : undefined;
   const selectedRoom = selectedHotel?.roomTypes.find((room) => room.name === selectedRoomName);
-  const hotelName = selectedHotel?.name ?? `${destCity} Holiday Inn`;
+  const hotelName = selectedHotel?.name ?? `${destCity}精选酒店`;
   const hotelArea = selectedHotel?.area ?? `${destCity}核心区域`;
   const hotelRating = selectedHotel?.rating ?? 4.8;
   const hotelBookingTip = selectedHotel?.bookingTip ?? '舒适高分酒店，适合城市漫游与短住。';
   const hotelHighlights = selectedHotel?.highlights ?? ['含早餐', '免费取消', '近商圈'];
-  const hotelImage = selectedHotel?.image ?? 'https://lh3.googleusercontent.com/aida-public/AB6AXuAZAVDAS5vry2vxBq9L2Cv3FjC44Po466vDUriL4CS9mhTTsfauAjDSeM2bBgSdsfxNiFLP446RRR2SPLoWWRnLUooYiLch5HkjfvVyi6LPSTWvvGpe-qqBV1xQnV24Ybo-i0vxk6eNMu4tm3DYf1C4StTh8PEZtzdyJY6804WcjSY-b1oJrPBqEqfTKQa-GIwS9bxKLpmNtWXiqlYm7ISzbVYGxB09tTgz3lTZ347YLLFFr-BSCW9tPlsP7Lm6Y67S4d4-4F7emWE';
+  const hotelImage = selectedHotel?.image ?? '/booking/hotels/recommended/cover.png';
   const hotelBadge = selectedHotel?.badge ?? '精选';
   const defaultHotelNightPrice = selectedHotel?.pricePerNightCny ?? Math.round(baseHotelTotalPrice / Math.max(totalNights, 1));
   const hotelNightPrice = selectedRoom?.pricePerNightCny ?? defaultHotelNightPrice;
   const hotelTotalPrice = hotelNightPrice * Math.max(totalNights, 1);
   const totalBookingPrice = flightPrice + hotelTotalPrice;
-  const destinationLabel = `${destCity}, ${itinerary?.intent.dest_country ?? '日本'}`;
+  const destinationLabel = `${destCity}, ${itinerary?.intent.dest_country ?? '中国'}`;
   const checkInDateLabel = itinerary?.intent.departure_date ? formatDT(itinerary.intent.departure_date) : '11.12';
   const checkOutDateLabel = itinerary?.intent.return_date ? formatDT(itinerary.intent.return_date) : '11.15';
   const dateLabel = `${checkInDateLabel} - ${checkOutDateLabel}`;
@@ -1761,6 +1656,7 @@ function BookingSidebar({ itinerary }: {
                   selectedHotelId={selectedHotelId}
                   onSelect={setSelectedHotelId}
                   onConfirm={() => setIsHotelPickerOpen(false)}
+                  cityName={destCity}
                   onViewDetails={(hotelId) => {
                     setSelectedHotelId(hotelId);
                     setDetailHotelId(hotelId);
@@ -2001,7 +1897,7 @@ function BookingSidebar({ itinerary }: {
                     >
                       <div className="flex items-center gap-3">
                         <div className="w-11 h-11 rounded-2xl bg-white shadow-sm border border-outline-variant/10 flex items-center justify-center overflow-hidden">
-                          <img src="/images/wechat.png" alt="微信支付" className="w-7 h-7 object-contain" />
+                          <img src={wechatPayImage} alt="微信支付" className="w-7 h-7 object-contain" />
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-bold text-on-surface">微信支付</p>
@@ -2020,7 +1916,7 @@ function BookingSidebar({ itinerary }: {
                     >
                       <div className="flex items-center gap-3">
                         <div className="w-11 h-11 rounded-2xl bg-white shadow-sm border border-outline-variant/10 flex items-center justify-center overflow-hidden">
-                          <img src="/images/alipay.png" alt="支付宝支付" className="w-7 h-7 object-contain" />
+                          <img src={alipayPayImage} alt="支付宝支付" className="w-7 h-7 object-contain" />
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-bold text-on-surface">支付宝支付</p>
@@ -2295,6 +2191,7 @@ function ScheduleCard({ scheduleKey, currentDay, destCity, destCountry, activeDa
               category={act.category}
               destCountry={destCountry}
               sig={activeIndex * 10 + idx + 1}
+              imageUrl={act.image_url}
             />
           </div>
         )) : (
@@ -2393,7 +2290,7 @@ function RecommendationsWidget({ itinerary }: { itinerary: FinalItinerary | null
           <span className="text-[10px] font-bold uppercase tracking-wider text-primary">酒店推荐</span>
         </div>
         <p className="text-sm font-semibold text-on-surface">
-          {itinerary?.recommended_hotel?.name ?? '洱海云端精品民宿'}
+          {itinerary?.recommended_hotel?.name ?? '北京东方景观酒店'}
         </p>
         <p className="text-xs text-primary font-bold mt-1">
           ¥{itinerary?.recommended_hotel ? Math.round(itinerary.recommended_hotel.price_per_night_cny) : '300'} / 晚起
@@ -2412,13 +2309,13 @@ function RecommendationShowcaseWidget({ itinerary }: { itinerary: FinalItinerary
     window.dispatchEvent(new CustomEvent('open-recommended-hotel-details'));
   };
 
-  const hotelName = itinerary?.recommended_hotel?.name ?? '洱海云端精品民宿';
+  const hotelName = itinerary?.recommended_hotel?.name ?? '北京东方景观酒店';
   const hotelPrice = itinerary?.recommended_hotel ? Math.round(itinerary.recommended_hotel.price_per_night_cny) : 300;
-  const hotelArea = itinerary?.recommended_hotel?.area ?? '大理古村码头附近';
+  const hotelArea = itinerary?.recommended_hotel?.area ?? '东城区核心区域';
   const hotelRating = itinerary?.recommended_hotel?.stars ? itinerary.recommended_hotel.stars.toFixed(1) : '4.9';
-  const hotelTags = itinerary?.recommended_hotel?.highlights?.slice(0, 3) ?? ['洱海海景', '设计师民宿', '免费早餐'];
-  const hotelDescription = itinerary?.recommended_hotel?.booking_tip ?? '坐落于洱海之畔，推窗见海，感受苍山洱海的宁静与美好。';
-  const hotelImage = 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1400&q=80';
+  const hotelTags = itinerary?.recommended_hotel?.highlights?.slice(0, 3) ?? ['近地铁', '高评分', '免费早餐'];
+  const hotelDescription = itinerary?.recommended_hotel?.booking_tip ?? '位于北京核心区，适合城市深度游与商务出行。';
+  const hotelImage = '/booking/hotels/recommended/cover.png';
 
   return (
     <div className="space-y-4">
@@ -2460,7 +2357,7 @@ function RecommendationShowcaseWidget({ itinerary }: { itinerary: FinalItinerary
           <div className="flex items-start justify-between gap-3">
             <div className="inline-flex items-center gap-1.5 rounded-full bg-white/18 px-2.5 py-1 text-[10px] font-bold backdrop-blur-md border border-white/15">
               <Hotel className="h-3.5 w-3.5" />
-              <span>精选民宿</span>
+              <span>精选酒店</span>
             </div>
             <button
               type="button"
@@ -2581,7 +2478,7 @@ function HighlightsSection({ highlights }: { highlights: string[] | undefined })
             <div className="flex flex-col h-full relative z-10">
               <Mountain className="w-5 h-5 text-orange-500 mb-3" />
               <h5 className="text-sm font-bold text-on-surface mb-1.5">覆盖核心景点</h5>
-              <p className="text-xs text-outline leading-relaxed">包含古城、洱海与当地特色体验</p>
+              <p className="text-xs text-outline leading-relaxed">覆盖北京核心地标与城市特色体验</p>
             </div>
           </div>
           <div className="relative bg-purple-50/50 p-4 md:p-5 rounded-xl border border-purple-100/50 overflow-hidden card-pattern-geo">

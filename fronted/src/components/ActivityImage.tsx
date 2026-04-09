@@ -7,17 +7,25 @@ interface ActivityImageProps {
   category: string;
   destCountry: string;
   sig: number;
+  imageUrl?: string | null;
 }
 
 export const ActivityImage = memo(function ActivityImage({
-  activity, location, category, destCountry, sig,
+  activity, location, category, destCountry, sig, imageUrl,
 }: ActivityImageProps) {
   const cacheKey = buildImageCacheKey(activity, location, category);
+  const directSrc = imageUrl?.trim() || null;
   const fallback = picsumFallback(`${destCountry}-${category}-${sig}`);
-  const [src, setSrc] = useState<string>(() => imgCache.get(cacheKey) ?? fallback);
-  const [loaded, setLoaded] = useState<boolean>(() => loadedCache.get(cacheKey) ?? false);
+  const [src, setSrc] = useState<string>(() => directSrc ?? imgCache.get(cacheKey) ?? fallback);
+  const [loaded, setLoaded] = useState<boolean>(() => directSrc ? false : (loadedCache.get(cacheKey) ?? false));
 
   useEffect(() => {
+    if (directSrc) {
+      setSrc(directSrc);
+      setLoaded(false);
+      return;
+    }
+
     let cancelled = false;
     prefetchPixabayImage(activity, location, category).then((url) => {
       if (cancelled || !url) return;
@@ -25,10 +33,10 @@ export const ActivityImage = memo(function ActivityImage({
       setLoaded(loadedCache.get(cacheKey) ?? false);
     });
     return () => { cancelled = true; };
-  }, [activity, location, category, cacheKey]);
+  }, [activity, location, category, cacheKey, directSrc]);
 
   return (
-    <div className="w-24 h-24 rounded-lg overflow-hidden flex-shrink-0 shadow-sm bg-surface-container-low relative">
+    <div className="w-32 h-24 md:w-40 md:h-28 rounded-lg overflow-hidden flex-shrink-0 shadow-sm bg-surface-container-low relative">
       {!loaded && <div className="absolute inset-0 animate-pulse bg-surface-container-high" />}
       <img
         src={src}
@@ -36,7 +44,16 @@ export const ActivityImage = memo(function ActivityImage({
         loading="lazy"
         className={`w-full h-full object-cover transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
         onLoad={() => { setLoaded(true); loadedCache.set(cacheKey, true); }}
-        onError={() => { if (src !== fallback) { setSrc(fallback); setLoaded(false); loadedCache.delete(cacheKey); } }}
+        onError={() => {
+          if (src !== fallback) {
+            setSrc(fallback);
+            setLoaded(false);
+            return;
+          }
+          // Fallback also failed: stop skeleton and show broken image state only
+          setLoaded(true);
+          loadedCache.delete(cacheKey);
+        }}
       />
     </div>
   );

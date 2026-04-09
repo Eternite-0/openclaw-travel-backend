@@ -90,6 +90,13 @@ function formatMonthTitle(date: Date) {
   return `${date.getFullYear()}年${date.getMonth() + 1}月`;
 }
 
+function getGreetingByHour(date: Date) {
+  const hour = date.getHours();
+  if (hour < 12) return 'Good Morning';
+  if (hour < 18) return 'Good Afternoon';
+  return 'Good Evening';
+}
+
 function toDateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
@@ -128,6 +135,7 @@ export function HomeView({ sessionId, onNavigate }: HomeViewProps) {
   const [flexibleDays, setFlexibleDays] = useState(3);
   const [flexibleMonth, setFlexibleMonth] = useState(4);
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(parseDateString('2026-04-09')));
+  const greeting = useMemo(() => getGreetingByHour(new Date()), []);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -281,7 +289,7 @@ export function HomeView({ sessionId, onNavigate }: HomeViewProps) {
           <div className="flex items-center justify-center gap-3 md:gap-4 mb-1">
             <Sun className="w-8 h-8 md:w-10 md:h-10 text-orange-400 opacity-80 fill-orange-400" />
             <h2 className="text-3xl md:text-5xl font-serif text-slate-800 tracking-tight leading-tight italic">
-              Good Afternoon, Tracy
+              {greeting}, Tracy
             </h2>
           </div>
           <p className="text-slate-400 font-sans text-lg md:text-xl font-light tracking-wide">

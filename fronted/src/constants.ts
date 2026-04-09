@@ -1,5 +1,5 @@
 import {
-  Sparkles, Banknote, Calculator, Plane, Hotel, Compass, CloudSun, Route, ShieldCheck,
+  Sparkles, Banknote, Calculator, Plane, Hotel, Compass, CloudSun, Route, ShieldCheck, Globe2, NotebookText,
 } from 'lucide-react';
 import type { AgentStatus, AgentStyleConfig } from './types';
 
@@ -18,6 +18,7 @@ export const AGENT_PLACEHOLDERS: AgentStatus[] = [
 
 export const AGENT_STYLE: Record<string, AgentStyleConfig> = {
   intent_parser:    { icon: Sparkles,   color: 'text-indigo-500', bg: 'bg-indigo-50',  activeBg: 'bg-indigo-100' },
+  destination_agent:{ icon: Globe2,     color: 'text-blue-500',   bg: 'bg-blue-50',    activeBg: 'bg-blue-100' },
   currency_agent:   { icon: Banknote,   color: 'text-amber-500',  bg: 'bg-amber-50',   activeBg: 'bg-amber-100' },
   budget_agent:     { icon: Calculator,  color: 'text-emerald-500', bg: 'bg-emerald-50', activeBg: 'bg-emerald-100' },
   visa_agent:       { icon: ShieldCheck, color: 'text-cyan-500',   bg: 'bg-cyan-50',    activeBg: 'bg-cyan-100' },
@@ -25,6 +26,7 @@ export const AGENT_STYLE: Record<string, AgentStyleConfig> = {
   hotel_agent:      { icon: Hotel,      color: 'text-rose-500',   bg: 'bg-rose-50',    activeBg: 'bg-rose-100' },
   attraction_agent: { icon: Compass,    color: 'text-violet-500', bg: 'bg-violet-50',  activeBg: 'bg-violet-100' },
   weather_agent:    { icon: CloudSun,   color: 'text-orange-500', bg: 'bg-orange-50',  activeBg: 'bg-orange-100' },
+  local_tips_agent: { icon: NotebookText, color: 'text-fuchsia-500', bg: 'bg-fuchsia-50', activeBg: 'bg-fuchsia-100' },
   itinerary_agent:  { icon: Route,      color: 'text-teal-500',   bg: 'bg-teal-50',    activeBg: 'bg-teal-100' },
 };
 
@@ -37,6 +39,12 @@ export const AGENT_MESSAGES: Record<string, string[]> = {
     '提取预算与出行偏好...',
     '识别特殊行程要求...',
     '整理旅行意图数据...',
+  ],
+  destination_agent: [
+    '正在查找目的地基础信息...',
+    '分析北京热门区域分布...',
+    '整理7天适配玩法方向...',
+    '评估旺季客流和预约情况...',
   ],
   currency_agent: [
     '获取实时汇率数据...',
@@ -86,6 +94,12 @@ export const AGENT_MESSAGES: Record<string, string[]> = {
     '生成逐日穿衣建议...',
     '评估天气对行程的影响...',
     '整合气象数据报告...',
+  ],
+  local_tips_agent: [
+    '整理北京本地交通规则...',
+    '汇总预约与排队避坑信息...',
+    '筛选高评分本地美食建议...',
+    '生成实用应急与安全提示...',
   ],
   itinerary_agent: [
     '综合所有数据编排行程...',

@@ -10,6 +10,7 @@ export interface AgentStatus {
   finished_at: string | null;
   message: string;
   result_summary: string;
+  preview_image?: string | null;
 }
 
 export interface TaskStatus {
@@ -60,6 +61,7 @@ export interface ItineraryActivity {
   location: string;
   lat?: number | null;
   lng?: number | null;
+  image_url?: string | null;
   category: string;
   estimated_cost_cny: number;
   tips: string;

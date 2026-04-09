@@ -15,6 +15,7 @@ export function normalizeAgents(incoming: AgentStatus[] | undefined, fallback: A
 export function formatDT(dt: string): string {
   try {
     const d = new Date(dt);
+    if (Number.isNaN(d.getTime())) return dt;
     return d.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   } catch { return dt; }
 }

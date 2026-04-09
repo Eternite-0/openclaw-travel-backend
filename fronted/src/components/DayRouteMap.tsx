@@ -5,26 +5,47 @@ import { createPortal } from 'react-dom';
 // MarkerClusterGroup removed — always show individual numbered markers
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import type { ItineraryActivity } from '../types';
+import type { ItineraryActivity, ItineraryDay } from '../types';
 import { fetchWalkingRoute } from '../api';
 
 /* ── Numbered marker icon factory ──────────────────────────────────────────── */
-function createNumberedIcon(index: number, isFirst: boolean, isLast: boolean) {
-  const bg = isFirst ? '#10b981' : isLast ? '#ef4444' : '#10b981';
+function createMarkerIcon(label: string, style: 'current' | 'other', isFirst = false, isLast = false) {
+  const bg = style === 'other'
+    ? '#f59e0b'
+    : (isFirst ? '#10b981' : isLast ? '#ef4444' : '#10b981');
+  const size = style === 'other' ? 30 : 28;
+  const fontSize = style === 'other' ? 11 : 12;
   return L.divIcon({
     className: '',
     html: `<div style="
-      width:28px;height:28px;border-radius:50%;
+      width:${size}px;height:${size}px;border-radius:50%;
       background:${bg};color:#fff;
       display:flex;align-items:center;justify-content:center;
-      font-size:12px;font-weight:700;
+      font-size:${fontSize}px;font-weight:700;
       border:3px solid #fff;
       box-shadow:0 2px 8px rgba(0,0,0,0.3);
-    ">${index + 1}</div>`,
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
+    ">${label}</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
     popupAnchor: [0, -16],
   });
+}
+
+function toChineseDay(day: number): string {
+  const names = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+  return names[day - 1] ? `第${names[day - 1]}天` : `第${day}天`;
+}
+
+interface MapPoint {
+  lat: number;
+  lng: number;
+  name: string;
+  time: string;
+  location: string;
+  markerLabel: string;
+  markerType: 'current' | 'other';
+  dayNumber: number;
+  imageUrl?: string | null;
 }
 
 
@@ -76,24 +97,58 @@ function isInsideChina(lat: number, lng: number): boolean {
 interface DayRouteMapProps {
   activities: ItineraryActivity[];
   dayNumber: number;
+  itineraryDays?: ItineraryDay[];
   city?: string;
 }
 
-export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapProps) {
+export function DayRouteMap({ activities, dayNumber, itineraryDays = [], city = '' }: DayRouteMapProps) {
   const [expanded, setExpanded] = useState(false);
   const slotRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const points = useMemo(() =>
+  const dayPoints = useMemo<MapPoint[]>(() =>
     activities
       .filter((a) => a.lat != null && a.lng != null)
-      .map((a) => ({
+      .map((a, idx) => ({
         lat: a.lat!,
         lng: a.lng!,
         name: a.activity,
         time: a.time,
         location: a.location,
+        markerLabel: `${idx + 1}`,
+        markerType: 'current',
+        dayNumber,
+        imageUrl: a.image_url ?? `/map-points/day-${dayNumber}-spot-${idx + 1}.png`,
       })),
-    [activities]
+    [activities, dayNumber]
+  );
+
+  const extraDayPoints = useMemo<MapPoint[]>(() => {
+    if (!itineraryDays.length) return [];
+    return itineraryDays
+      .filter((d) => d.day_number !== dayNumber)
+      .map((d) => {
+        const first = d.activities.find((a) => a.lat != null && a.lng != null);
+        if (!first) return null;
+        return {
+          lat: first.lat!,
+          lng: first.lng!,
+          name: first.activity,
+          time: first.time,
+          location: first.location,
+          markerLabel: `D${d.day_number}`,
+          markerType: 'other',
+          dayNumber: d.day_number,
+          imageUrl: first.image_url ?? `/map-points/day-${d.day_number}-spot-1.png`,
+        } as MapPoint;
+      })
+      .filter((p): p is MapPoint => Boolean(p));
+  }, [itineraryDays, dayNumber]);
+
+  const points = useMemo<MapPoint[]>(() => [...dayPoints, ...extraDayPoints], [dayPoints, extraDayPoints]);
+
+  const routePositions: [number, number][] = useMemo(
+    () => dayPoints.map((p) => [p.lat, p.lng]),
+    [dayPoints]
   );
 
   const positions: [number, number][] = useMemo(
@@ -116,12 +171,12 @@ export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapPro
   const [routeFailed, setRouteFailed] = useState(false);
 
   const positionsKey = useMemo(
-    () => points.map((p) => `${p.lat},${p.lng}`).join('|'),
-    [points],
+    () => dayPoints.map((p) => `${p.lat},${p.lng}`).join('|'),
+    [dayPoints],
   );
 
   const loadWalkingRoute = useCallback(async () => {
-    if (points.length < 2 || isHikingRoute) {
+    if (dayPoints.length < 2 || isHikingRoute) {
       setRouteSegments(null);
       setRouteFailed(false);
       return;
@@ -130,7 +185,7 @@ export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapPro
     setRouteFailed(false);
     try {
       const resp = await fetchWalkingRoute(
-        points.map((p) => ({
+        dayPoints.map((p) => ({
           lat: p.lat,
           lng: p.lng,
           name: p.name,
@@ -230,7 +285,7 @@ export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapPro
             <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
           </div>
           <span className="text-[11px] font-bold text-slate-700 tracking-tight">
-            第{dayNumber}天路线 · {points.length}个地点
+            第{dayNumber}天路线 · 当前{dayPoints.length}个地点 · 额外{extraDayPoints.length}个首站
             {routeLoading && ' · 加载路径...'}
             {!routeLoading && routeFailed && !isHikingRoute && ' · 路网规划失败'}
           </span>
@@ -283,10 +338,10 @@ export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapPro
                       lineJoin: 'round',
                     }}
                   />
-                ) : positions[i] && positions[i + 1] ? (
+                ) : routePositions[i] && routePositions[i + 1] ? (
                   <Polyline
                     key={`fallback-${dayNumber}-${i}`}
-                    positions={[positions[i], positions[i + 1]]}
+                    positions={[routePositions[i], routePositions[i + 1]]}
                     pathOptions={{
                       color: '#10b981',
                       weight: 3,
@@ -299,7 +354,7 @@ export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapPro
               )
             : (
                 <Polyline
-                  positions={positions}
+                  positions={routePositions}
                   pathOptions={{
                     color: '#10b981',
                     weight: 3,
@@ -315,15 +370,41 @@ export function DayRouteMap({ activities, dayNumber, city = '' }: DayRouteMapPro
           {/* Markers: always show individual numbered markers */}
           {points.map((pt, idx) => (
             <Marker
-              key={`${dayNumber}-${idx}`}
+              key={`${pt.dayNumber}-${pt.markerType}-${idx}`}
               position={[pt.lat, pt.lng]}
-              icon={createNumberedIcon(idx, idx === 0, idx === points.length - 1)}
+              icon={createMarkerIcon(
+                pt.markerLabel,
+                pt.markerType,
+                pt.markerType === 'current' && idx === 0,
+                pt.markerType === 'current' && idx === dayPoints.length - 1,
+              )}
             >
               <Popup>
-                <div className="text-xs min-w-[120px]">
-                  <p className="font-bold text-sm">{pt.name}</p>
-                  <p className="text-gray-500 mt-0.5">{pt.time}</p>
-                  <p className="text-gray-400 mt-0.5">{pt.location}</p>
+                <div className="text-xs min-w-[260px]">
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-bold text-sm">{pt.name}</p>
+                      <p className="text-gray-500 mt-0.5">{pt.time}</p>
+                      <p className="text-gray-400 mt-0.5">{pt.location}</p>
+                      <p className={`mt-1 inline-block text-[11px] px-2 py-0.5 rounded ${
+                        pt.markerType === 'other' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
+                      }`}>
+                        {toChineseDay(pt.dayNumber)}
+                      </p>
+                    </div>
+                    <div className="w-[110px] h-[80px] rounded border border-red-400 overflow-hidden bg-surface-container-low flex-shrink-0">
+                      <img
+                        src={pt.imageUrl ?? `/map-points/day-${pt.dayNumber}-spot-1.png`}
+                        alt={`${pt.name} 地点图`}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          target.style.display = 'none';
+                        }}
+                      />
+                    </div>
+                  </div>
                 </div>
               </Popup>
             </Marker>
