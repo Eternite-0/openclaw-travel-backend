@@ -21,12 +21,23 @@ import { ActivityImage } from './ActivityImage';
 import { DayRouteMap } from './DayRouteMap';
 import wechatPayImage from '../../images/wechat.png';
 import alipayPayImage from '../../images/alipay.png';
+import searchPromptImage from '../../images/search.png';
+import editPromptImage from '../../images/edit.png';
+import summaryPromptImage from '../../images/summary.png';
+import optimizePromptImage from '../../images/opti.png';
 
 interface ItineraryViewProps {
   itinerary: FinalItinerary | null;
   sessionId: string;
   onUpdateItinerary: (updated: FinalItinerary) => void;
 }
+
+const CHAT_PROMPTS = [
+  { text: '查询行程中的任何细节', icon: searchPromptImage, alt: '查询' },
+  { text: '修改某一天的行程安排', icon: editPromptImage, alt: '修改' },
+  { text: '总结或对比行程方案', icon: summaryPromptImage, alt: '总结' },
+  { text: '优化预算与交通规划', icon: optimizePromptImage, alt: '优化' },
+] as const;
 
 export function ItineraryView({
   itinerary, sessionId, onUpdateItinerary,
@@ -2896,13 +2907,19 @@ function ChatPanel({
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.35, delay: 0.2 }}
-                    className="mt-3 text-[13px] text-on-surface-variant leading-relaxed"
+                    className="mt-3"
                   >
-                    <p>你可以直接告诉我，比如：</p>
-                    <ul className="mt-2 space-y-1.5 list-disc list-inside">
-                      {(['查询行程中的任何细节', '修改某一天的行程安排', '总结或对比行程方案', '优化预算与交通规划'] as string[]).map(t => (
-                        <li key={t}>
-                          <button onClick={() => setInputValue(t)} className="hover:text-on-surface transition-colors text-left">{t}</button>
+                    <p className="text-[13px] text-on-surface-variant leading-relaxed mb-2">你可以直接告诉我，比如：</p>
+                    <ul className="space-y-1.5">
+                      {CHAT_PROMPTS.map((item) => (
+                        <li key={item.text}>
+                          <button
+                            onClick={() => setInputValue(item.text)}
+                            className="group w-full text-left flex items-center gap-2.5 rounded-full px-3 py-2.5 transition-colors bg-transparent text-on-surface border border-transparent hover:bg-surface-container-low hover:border-outline-variant/20"
+                          >
+                            <img src={item.icon} alt={item.alt} className="w-6 h-6 object-contain shrink-0" />
+                            <span className="text-[14px] font-medium leading-none">{item.text}</span>
+                          </button>
                         </li>
                       ))}
                     </ul>

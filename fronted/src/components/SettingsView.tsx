@@ -5,6 +5,7 @@ import {
   Globe, Clock, ChevronRight, Download,
   ReceiptText, ArrowLeft, Sparkles, Check, Loader2, AlertCircle, X,
 } from 'lucide-react';
+import defaultAvatarImage from '../../images/avatar.jpg';
 import {
   fetchUserProfile, updateUserProfile, changePassword, deleteAccount,
   clearTokens, saveTokens, getTokens,
@@ -213,7 +214,11 @@ function AccountTab({ onLogout }: { onLogout?: () => void }) {
                         referrerPolicy="no-referrer"
                       />
                     ) : (
-                      <span className="text-2xl font-bold text-primary">{name.charAt(0).toUpperCase()}</span>
+                      <img
+                        src={defaultAvatarImage}
+                        alt="默认头像"
+                        className="w-full h-full object-cover"
+                      />
                     )}
                   </div>
                 </div>

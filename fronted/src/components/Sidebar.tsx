@@ -1,6 +1,7 @@
 import { memo, useState, useRef, useEffect, useCallback } from 'react';
 import { Map as MapIcon, History, PlusCircle, Settings, LogOut, Globe, HelpCircle, ChevronRight, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
+import defaultAvatarImage from '../../images/avatar.jpg';
 
 interface SidebarProps {
   currentView: string;
@@ -163,9 +164,7 @@ export const Sidebar = memo(function Sidebar({ currentView, onNavigate, isOpen, 
               {avatarUrl ? (
                 <img src={avatarUrl} alt={username ?? 'User'} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
-                <span className="text-xs font-bold text-primary">
-                  {(username ?? 'U').charAt(0).toUpperCase()}
-                </span>
+                <img src={defaultAvatarImage} alt="默认头像" className="w-full h-full object-cover" />
               )}
             </div>
             <div className="min-w-0 text-left">
