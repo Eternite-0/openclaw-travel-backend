@@ -26,6 +26,7 @@ class MemoryManager:
     Short-term : last N messages for current turn context window.
     Long-term  : full conversation history serialized in Redis / fallback dict.
     """
+    # AI辅助生成：Kimi，2026-04-01，用途：多轮对话短期/长期双层记忆机制设计参考
 
     def __init__(
         self,
@@ -65,10 +66,12 @@ class MemoryManager:
         store.append(json.loads(entry))
 
     async def get_short_term(self) -> list[dict]:
+        # AI辅助生成：Kimi，2026-04-01，用途：短期会话窗口裁剪策略说明
         all_msgs = await self.get_full_history()
         return all_msgs[-self.max_short_term:]
 
     async def get_full_history(self) -> list[dict]:
+        # AI辅助生成：Kimi，2026-04-01，用途：长程会话历史读取与回退存储机制说明
         if self._redis is not None:
             try:
                 raw_list = await self._redis.lrange(self._key, 0, -1)
@@ -196,6 +199,7 @@ class MemoryManager:
 
         Inspired by claude-code's autoCompact + compactConversation + PTL retry.
         """
+        # AI辅助生成：Kimi，2026-04-01，用途：多轮记忆压缩触发条件与摘要保留策略设计
         result: dict[str, Any] = {
             "compressed": False,
             "consecutive_failures": consecutive_failures,
@@ -265,6 +269,7 @@ class MemoryManager:
             context_text = context_text[-self._MAX_SUMMARIZE_INPUT_CHARS:]
 
         # ── Call LLM with structured prompt ──────────────────────────
+        # AI辅助生成：Kimi，2026-04-01，用途：会话摘要生成提示词结构与调用流程设计
         prompt = self._COMPACT_PROMPT_TEMPLATE.format(context=context_text)
         try:
             settings_cfg_list = llm_config.get("config_list", [{}])

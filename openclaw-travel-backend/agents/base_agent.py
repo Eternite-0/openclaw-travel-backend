@@ -163,6 +163,7 @@ class BaseSpecialistAgent:
         temperature: float | None = None,
         max_tokens: int = 4000,
     ) -> str:
+        # AI辅助生成：DeepSeek，2026-04-01，用途：Function Calling链路中的模型调用重试与稳态容错机制设计
         temp = self._temperature if temperature is None else temperature
         _MAX_ATTEMPTS = 6
         _EXP_DELAYS = [2, 4, 8, 16, 32, 60]
@@ -249,6 +250,7 @@ class BaseSpecialistAgent:
             raise
 
     async def _execute(self, context: dict[str, Any]) -> BaseModel:
+        # AI辅助生成：DeepSeek，2026-04-01，用途：结构化JSON输出与Schema对齐的执行流程设计
         system_prompt = self._build_system_prompt(context)
         user_prompt = "请按照系统提示中的 JSON Schema 输出结果。"
 
@@ -269,6 +271,7 @@ class BaseSpecialistAgent:
         except json.JSONDecodeError as exc:
             raise ValueError(f"LLM returned invalid JSON: {exc}") from exc
 
+        # AI辅助生成：DeepSeek，2026-04-01，用途：Function Calling异常分支重试与结果纠偏策略设计
         if parsed.get("error") == "out_of_scope":
             logger.warning("Agent %s got out_of_scope, retrying with clarification", self.agent_name)
             try:
@@ -322,6 +325,7 @@ class BaseSpecialistAgent:
         if "error" in parsed:
             raise ValueError(f"LLM returned error: {parsed['error']}")
 
+        # AI辅助生成：DeepSeek，2026-04-01，用途：输出结果与Pydantic schema强校验对齐
         return self.output_schema.model_validate(parsed)
 
     def _build_system_prompt(self, context: dict[str, Any]) -> str:

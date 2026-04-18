@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    # AI辅助生成：通义千问(Qwen)，2026-03-01，用途：FastAPI服务生命周期与基础设施初始化骨架设计
     settings = get_settings()
 
     logging.basicConfig(
@@ -73,6 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def create_app() -> FastAPI:
+    # AI辅助生成：通义千问(Qwen)，2026-04-01，用途：FastAPI应用入口与代码框架生成参考
     settings = get_settings()
 
     app = FastAPI(
@@ -113,6 +115,7 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(auth.router, prefix="/api", tags=["Auth"])
+    # AI辅助生成：通义千问(Qwen)，2026-03-01，用途：后端路由模块化挂载与系统架构分层设计参考
     app.include_router(chat.router, prefix="/api", tags=["Chat"])
     app.include_router(status.router, prefix="/api", tags=["Task Status"])
     app.include_router(itinerary.router, prefix="/api", tags=["Itinerary"])
@@ -131,6 +134,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health", response_model=HealthResponse, tags=["Health"])
     async def health_check(request: Request) -> HealthResponse:
+        # AI辅助生成：通义千问(Qwen)，2026-04-01，用途：FastAPI健康检查接口模板与状态返回结构参考
         redis_status = "disabled"
         redis_client = getattr(request.app.state, "redis", None)
         if redis_client is not None:

@@ -11,6 +11,8 @@ class IntentParserAgent(BaseSpecialistAgent):
     display_name = "意图解析"
     output_schema = TravelIntent
     default_temperature = 0.1
+    # AI辅助生成：文心一言，2026-03-01，用途：技术方案分析中的意图解析提示词结构设计参考
+    # AI辅助生成：通义千问(Qwen)，2026-03-01，用途：多Agent系统中上下文继承与字段约束规则梳理
 
     SYSTEM_PROMPT_TEMPLATE = """你是"智慧旅行助手"系统中的意图解析专家（IntentParserAgent）。
 
@@ -56,6 +58,7 @@ class IntentParserAgent(BaseSpecialistAgent):
         self._previous_intent_json = previous_intent_json
 
     def _build_system_prompt(self, context: dict) -> str:
+        # AI辅助生成：文心一言，2026-03-01，用途：技术方案中的上下文拼装与schema注入实现参考
         import json
         schema_json = json.dumps(
             self.output_schema.model_json_schema(),

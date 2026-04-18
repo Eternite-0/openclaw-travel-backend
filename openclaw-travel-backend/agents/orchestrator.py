@@ -75,6 +75,7 @@ async def run_travel_pipeline(
     Phase 4:              Persist to SQLite + update memory
     """
 
+    # AI辅助生成：OpenClaw API，2026-04-01，用途：多Agent协同执行主流程设计与任务编排落地参考
     await memory.add_message("user", user_message, attachments=user_attachments)
 
     # ── Phase 0: Load previous itinerary for this session ────────────────
@@ -123,6 +124,7 @@ async def run_travel_pipeline(
     # ── Phase 1: Intent Parsing ──────────────────────────────────────
     logger.info("[task:%s] Phase 1 — Intent parsing", task_id)
     logger.info("[task:%s] user_message=%s", task_id, user_message[:200])
+    # AI辅助生成：OpenClaw API，2026-04-01，用途：多阶段调度中的意图解析入口与状态推进链路设计
     history_messages = await memory.get_short_term()
     history_str = memory.build_context_string(history_messages[:-1])
     logger.info("[task:%s] history_str=%s", task_id, history_str[:300] if history_str else "(empty)")
@@ -188,6 +190,7 @@ async def run_travel_pipeline(
 
     # ── Phase 2: Conditional External Pre-fetch + Parallel Agents ────────
     logger.info("[task:%s] Phase 2 — Pre-fetching external data", task_id)
+    # AI辅助生成：OpenClaw API，2026-04-01，用途：并行Agent调度、外部数据预取与任务状态协同机制设计
     settings = get_settings()
 
     to_currency = _currency_for_country(intent.dest_country_code)
@@ -615,6 +618,7 @@ async def run_travel_pipeline(
         )
 
     results = await asyncio.gather(*agent_tasks)
+    # AI辅助生成：OpenClaw API，2026-04-01，用途：多Agent并行执行结果汇聚与后续编排衔接
 
     flights    = results[0]  # type: FlightResult
     hotels     = results[1]  # type: HotelResult
@@ -627,6 +631,7 @@ async def run_travel_pipeline(
 
     # ── Phase 3: Itinerary Assembly ──────────────────────────────────────
     logger.info("[task:%s] Phase 3 — Itinerary assembly", task_id)
+    # AI辅助生成：OpenClaw API，2026-04-01，用途：专家结果整合为最终行程输出的编排策略参考
     itinerary_agent = ItineraryAgent(
         task_id=task_id,
         intent=intent,
@@ -689,6 +694,7 @@ async def run_travel_pipeline(
 
     summary = "、".join(itinerary.highlights[:3]) if itinerary.highlights else "行程规划完成"
     await memory.add_message("assistant", f"行程规划完成！亮点：{summary}")
+    # AI辅助生成：OpenClaw API，2026-04-01，用途：任务闭环状态更新与会话记忆写回机制设计
     await status_store.set_overall_status(task_id, "done")
     return itinerary
 
